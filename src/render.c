@@ -22,6 +22,13 @@ static int wire_thickness_px(float cell) {
     return t < 1 ? 1 : t;
 }
 
+#define CONNECTION_DOT_CELL_FRACTION 0.12f
+
+static int connection_dot_radius_px(float cell) {
+    int r = (int)lroundf(cell * CONNECTION_DOT_CELL_FRACTION);
+    return r < 1 ? 1 : r;
+}
+
 /* The font is loaded at a much higher point size than it is ever displayed at
    (see text_util_load_font call in app.c) so labels stay crisp when the
    scaled blit below magnifies them at higher zoom - rendering small and
@@ -147,8 +154,7 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
     SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
     draw_thick_line(renderer, sfx, sfy, stx, sty, wire_thickness_px(cell));
 
-    int r = (int)lroundf(cell * 0.12f);
-    if (r < 1) r = 1;
+    int r = connection_dot_radius_px(cell);
     SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
     draw_filled_circle(renderer, sfx, sfy, r);
     draw_filled_circle(renderer, stx, sty, r);
@@ -192,9 +198,7 @@ static void draw_lone_connection_dot(SDL_Renderer *renderer, const Camera *cam, 
 
     int sx, sy;
     camera_grid_to_screen(cam, x, y, &sx, &sy);
-    float cell = camera_cell_px(cam);
-    int r = (int)lroundf(cell * 0.12f);
-    if (r < 1) r = 1;
+    int r = connection_dot_radius_px(camera_cell_px(cam));
     SDL_SetRenderDrawColor(renderer, CONNECTION_COLOR.r, CONNECTION_COLOR.g, CONNECTION_COLOR.b, 255);
     draw_filled_circle(renderer, sx, sy, r);
 }
@@ -210,9 +214,7 @@ static void render_wire_dots(SDL_Renderer *renderer, const Camera *cam, const Ci
 }
 
 static void render_junctions(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit) {
-    float cell = camera_cell_px(cam);
-    int r = (int)lroundf(cell * 0.12f);
-    if (r < 1) r = 1;
+    int r = connection_dot_radius_px(camera_cell_px(cam));
     SDL_SetRenderDrawColor(renderer, CONNECTION_COLOR.r, CONNECTION_COLOR.g, CONNECTION_COLOR.b, 255);
     for (int i = 0; i < circuit->junction_count; i++) {
         int sx, sy;
@@ -298,27 +300,30 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     int h = (int)lroundf(def->height * cell);
     int thickness = wire_thickness_px(cell);
 
+    /* pin edge anchors (screen-space) are computed once and reused by both the
+       stub pass and the label pass below, instead of recomputing per pin twice */
+    int is_left[MAX_PINS_PER_COMPONENT];
+    int edge_sx[MAX_PINS_PER_COMPONENT], edge_sy[MAX_PINS_PER_COMPONENT];
+    for (int pi = 0; pi < c->pin_count; pi++) {
+        is_left[pi] = (c->pins[pi].local_dx < 0);
+        int edge_x = is_left[pi] ? c->grid_x : c->grid_x + def->width;
+        int edge_y = c->grid_y + c->pins[pi].local_dy;
+        camera_grid_to_screen(cam, edge_x, edge_y, &edge_sx[pi], &edge_sy[pi]);
+    }
+
     /* stubs are drawn before the border (not after) so the border - opaque,
        drawn on top - cleanly caps off the seam where a stub's round end
        would otherwise bleed a little past the edge into the body interior */
     for (int pi = 0; pi < c->pin_count; pi++) {
         const Pin *p = &c->pins[pi];
-        int is_left = (p->local_dx < 0);
-
         int tip_x, tip_y;
         component_pin_world_pos(c, pi, &tip_x, &tip_y);
-        /* the body edge sits at local offset 0 (left) or width (right) - the
-           tip is one further cell out, so the stub actually pokes past it */
-        int edge_x = is_left ? c->grid_x : c->grid_x + def->width;
-        int edge_y = c->grid_y + p->local_dy;
-
-        int stx, sty, sex, sey;
+        int stx, sty;
         camera_grid_to_screen(cam, tip_x, tip_y, &stx, &sty);
-        camera_grid_to_screen(cam, edge_x, edge_y, &sex, &sey);
 
         SDL_Color col = signal_color(p->value);
         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
-        draw_thick_line(renderer, sex, sey, stx, sty, thickness);
+        draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], stx, sty, thickness);
     }
 
     SDL_Rect body = { sx, sy, w, h };
@@ -329,18 +334,12 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     if (font_large != NULL && cell >= 6.0f) {
         for (int pi = 0; pi < c->pin_count; pi++) {
             const Pin *p = &c->pins[pi];
-            int is_left = (p->local_dx < 0);
-            int edge_x = is_left ? c->grid_x : c->grid_x + def->width;
-            int edge_y = c->grid_y + p->local_dy;
-            int sex, sey;
-            camera_grid_to_screen(cam, edge_x, edge_y, &sex, &sey);
-
             int tw, th;
             text_util_measure(font_large, p->name, &tw, &th);
             int stw = (int)lroundf(tw * scale);
             int sth = (int)lroundf(th * scale);
-            int label_x = is_left ? sex + (int)lroundf(6 * scale) : sex - (int)lroundf(6 * scale) - stw;
-            text_util_draw_scaled(renderer, font_large, p->name, label_x, sey - sth / 2, LABEL_COLOR, scale);
+            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(6 * scale) : edge_sx[pi] - (int)lroundf(6 * scale) - stw;
+            text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, scale);
         }
     }
 }

@@ -14,7 +14,6 @@ typedef enum {
 } ComponentType;
 
 typedef struct {
-    int pin_number;      /* 1-based datasheet numbering, 0 for Input/Output pins */
     const char *name;
     PinDirection direction;
     int local_dx, local_dy; /* offset from component origin, in grid cells */
@@ -23,7 +22,6 @@ typedef struct {
 
 typedef struct {
     int in_use;
-    int id;                 /* == index in Circuit->components */
     ComponentType type;
     int grid_x, grid_y;      /* origin in grid cells */
     const IC_Def *ic_def;     /* IC definition this instance was placed from */

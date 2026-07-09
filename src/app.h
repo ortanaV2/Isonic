@@ -68,4 +68,8 @@ void app_render(App *app, SDL_Renderer *renderer);
    are drag-drawn wires now, see WireKind in circuit.h). */
 void app_get_tool_footprint(Tool tool, int *out_w, int *out_h);
 
+/* WIRE_HIT_TOLERANCE_PX converted to grid units at the current zoom - the
+   tolerance every wire/pin proximity hit-test in input_handler.c and app.c uses. */
+float app_wire_hit_tolerance(const App *app);
+
 #endif

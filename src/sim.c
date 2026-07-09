@@ -10,6 +10,27 @@ static int driver_present[TOTAL_POINTS];
 static int driver_conflict[TOTAL_POINTS];
 static SignalValue driver_value[TOTAL_POINTS];
 
+/* Net roots are resolved once per sim_step (topology can't change mid-step,
+   only circuit_rebuild_nets mutates it) and reused across all 5 gather/
+   propagate passes below, instead of re-walking the union-find chain for
+   every pin/wire on every pass. */
+static int pin_root_cache[MAX_GLOBAL_PINS];
+static int wire_root_cache[MAX_WIRES];
+
+static void cache_net_roots(Circuit *circuit) {
+    for (int ci = 0; ci < circuit->component_high_water; ci++) {
+        Component *c = &circuit->components[ci];
+        if (!c->in_use) continue;
+        for (int pi = 0; pi < c->pin_count; pi++) {
+            pin_root_cache[GLOBAL_PIN_ID(ci, pi)] = circuit_pin_net_root(circuit, ci, pi);
+        }
+    }
+    for (int wi = 0; wi < circuit->wire_high_water; wi++) {
+        if (!circuit->wires[wi].in_use) continue;
+        wire_root_cache[wi] = circuit_wire_net_root(circuit, wi);
+    }
+}
+
 static void register_driver(int root, SignalValue val) {
     if (driver_present[root]) {
         if (driver_value[root] != val) driver_conflict[root] = 1;
@@ -29,14 +50,14 @@ static void gather_drivers(Circuit *circuit) {
         for (int pi = 0; pi < c->pin_count; pi++) {
             Pin *p = &c->pins[pi];
             if (p->direction != PIN_OUTPUT) continue;
-            register_driver(circuit_pin_net_root(circuit, ci, pi), p->value);
+            register_driver(pin_root_cache[GLOBAL_PIN_ID(ci, pi)], p->value);
         }
     }
 
     for (int wi = 0; wi < circuit->wire_high_water; wi++) {
         Wire *w = &circuit->wires[wi];
         if (!w->in_use || w->kind != WIRE_KIND_INPUT) continue;
-        register_driver(circuit_wire_net_root(circuit, wi), w->input_value ? SIG_HIGH : SIG_LOW);
+        register_driver(wire_root_cache[wi], w->input_value ? SIG_HIGH : SIG_LOW);
     }
 }
 
@@ -46,7 +67,7 @@ static void propagate_to_pins(Circuit *circuit) {
         if (!c->in_use) continue;
         for (int pi = 0; pi < c->pin_count; pi++) {
             Pin *p = &c->pins[pi];
-            int root = circuit_pin_net_root(circuit, ci, pi);
+            int root = pin_root_cache[GLOBAL_PIN_ID(ci, pi)];
             if (driver_conflict[root]) {
                 p->value = SIG_CONFLICT;
             } else if (driver_present[root]) {
@@ -61,7 +82,7 @@ static void propagate_to_pins(Circuit *circuit) {
 static void propagate_to_wires(Circuit *circuit) {
     for (int wi = 0; wi < circuit->wire_high_water; wi++) {
         if (!circuit->wires[wi].in_use) continue;
-        int root = circuit_wire_net_root(circuit, wi);
+        int root = wire_root_cache[wi];
         if (driver_conflict[root]) {
             circuit->wire_values[wi] = SIG_CONFLICT;
         } else if (driver_present[root]) {
@@ -91,6 +112,7 @@ static void evaluate_ics(Circuit *circuit) {
 }
 
 void sim_step(Circuit *circuit) {
+    cache_net_roots(circuit);
     for (int iter = 0; iter < SIM_ITERATIONS; iter++) {
         gather_drivers(circuit);
         propagate_to_pins(circuit);

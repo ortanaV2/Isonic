@@ -27,7 +27,6 @@ typedef enum { WIRE_KIND_NORMAL, WIRE_KIND_INPUT, WIRE_KIND_OUTPUT } WireKind;
    endpoints land relative to other wires and pin tips (see circuit_rebuild_nets). */
 typedef struct {
     int in_use;
-    int id;
     int from_x, from_y; /* the H/L terminal end, for INPUT/OUTPUT kind */
     int to_x, to_y;       /* the open end - connects into the rest of the circuit like any wire endpoint */
     int selected;

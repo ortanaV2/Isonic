@@ -4,10 +4,8 @@
 
 static void clear_component(Component *c) {
     int in_use = c->in_use;
-    int id = c->id;
     memset(c, 0, sizeof(Component));
     c->in_use = in_use;
-    c->id = id;
 }
 
 void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) {
@@ -25,7 +23,6 @@ void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) 
     for (int i = 0; i < c->pin_count; i++) {
         const IC_PinDef *pd = &def->pins[i];
         Pin *p = &c->pins[i];
-        p->pin_number = pd->pin_number;
         p->name = pd->name;
         p->direction = pd->direction;
         p->value = SIG_UNKNOWN;

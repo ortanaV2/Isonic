@@ -1,6 +1,5 @@
 #include <string.h>
 #include "taskbar.h"
-#include "text_util.h"
 
 static const char *k_labels[TOOL_COUNT] = {
     "Select",
@@ -14,7 +13,30 @@ static const char *k_labels[TOOL_COUNT] = {
 #define BUTTON_MARGIN 6
 
 void taskbar_init(Taskbar *tb) {
+    for (int i = 0; i < TOOL_COUNT; i++) tb->label_textures[i] = NULL;
     taskbar_layout(tb, 800);
+}
+
+void taskbar_shutdown(Taskbar *tb) {
+    for (int i = 0; i < TOOL_COUNT; i++) {
+        if (tb->label_textures[i] != NULL) {
+            SDL_DestroyTexture(tb->label_textures[i]);
+            tb->label_textures[i] = NULL;
+        }
+    }
+}
+
+/* Button labels are static strings that never change after the app starts, so
+   the texture is created once on first use and just blitted every frame after -
+   text_util_draw would otherwise rebuild it from scratch 60 times a second. */
+static SDL_Texture *get_label_texture(SDL_Renderer *renderer, Taskbar *tb, TTF_Font *font, int i) {
+    if (tb->label_textures[i] != NULL || font == NULL) return tb->label_textures[i];
+    SDL_Color white = { 235, 235, 235, 255 };
+    SDL_Surface *surface = TTF_RenderUTF8_Blended(font, k_labels[i], white);
+    if (surface == NULL) return NULL;
+    tb->label_textures[i] = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_FreeSurface(surface);
+    return tb->label_textures[i];
 }
 
 void taskbar_layout(Taskbar *tb, int window_w) {
@@ -31,7 +53,7 @@ void taskbar_layout(Taskbar *tb, int window_w) {
     }
 }
 
-void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, const Taskbar *tb, Tool active_tool) {
+void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool active_tool) {
     SDL_Rect bar = { 0, 0, 4096, TASKBAR_HEIGHT };
     SDL_SetRenderDrawColor(renderer, 40, 40, 44, 255);
     SDL_RenderFillRect(renderer, &bar);
@@ -47,11 +69,13 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, const Taskbar *tb, T
         SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
         SDL_RenderDrawRect(renderer, r);
 
-        int tw, th;
-        text_util_measure(font, k_labels[i], &tw, &th);
-        SDL_Color white = { 235, 235, 235, 255 };
-        text_util_draw(renderer, font, k_labels[i],
-                        r->x + (r->w - tw) / 2, r->y + (r->h - th) / 2, white);
+        SDL_Texture *label = get_label_texture(renderer, tb, font, i);
+        if (label != NULL) {
+            int tw = 0, th = 0;
+            SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+            SDL_Rect dst = { r->x + (r->w - tw) / 2, r->y + (r->h - th) / 2, tw, th };
+            SDL_RenderCopy(renderer, label, NULL, &dst);
+        }
     }
 }
 

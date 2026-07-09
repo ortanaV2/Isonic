@@ -7,7 +7,8 @@ typedef struct {
     int pin_number;         /* 1-based, matches real datasheet numbering */
     const char *name;       /* e.g. "1A", "VCC" */
     PinDirection direction;
-    int side;                /* 0 = left, 1 = right (DIP layout) */
+    int side;                /* 0 = left, 1 = right of the schematic symbol body - a free authoring
+                                 choice per IC (e.g. by function), not tied to physical DIP layout */
 } IC_PinDef;
 
 typedef struct IC_Def {

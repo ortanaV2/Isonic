@@ -59,8 +59,7 @@ static void handle_right_click(App *app, int gx, int gy, float fx, float fy) {
         circuit_remove_component(&app->circuit, comp_id);
         return;
     }
-    float tolerance = WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
-    int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, tolerance);
+    int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         if (wire_id == app->selected_wire_id) app->selected_wire_id = -1;
         circuit_remove_wire(&app->circuit, wire_id);
@@ -171,19 +170,16 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return;
     }
 
-    /* TOOL_SELECT */
-    float tolerance = WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
-
-    /* wires are only ever started from the Wire/Input/Output tool now - Select
-       mode does not let you drag a new wire off a pin, even by clicking one */
-
+    /* TOOL_SELECT - wires are only ever started from the Wire/Input/Output tool
+       now; Select mode does not let you drag a new wire off a pin, even by
+       clicking one */
     int comp_id = circuit_find_component_at(&app->circuit, gx, gy);
     if (comp_id >= 0) {
         begin_drag(app, comp_id, gx, gy);
         return;
     }
 
-    int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, tolerance);
+    int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         select_wire(app, wire_id);
         return;

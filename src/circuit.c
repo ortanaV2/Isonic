@@ -10,11 +10,7 @@ typedef struct {
 
 void circuit_init(Circuit *circuit) {
     memset(circuit, 0, sizeof(Circuit));
-    for (int i = 0; i < MAX_COMPONENTS; i++) {
-        circuit->components[i].id = i;
-    }
     for (int i = 0; i < MAX_WIRES; i++) {
-        circuit->wires[i].id = i;
         circuit->wire_values[i] = SIG_UNKNOWN;
     }
     for (int i = 0; i < TOTAL_POINTS; i++) {

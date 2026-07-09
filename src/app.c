@@ -39,6 +39,7 @@ void app_init(App *app, int window_w, int window_h) {
 }
 
 void app_shutdown(App *app) {
+    taskbar_shutdown(&app->taskbar);
     if (app->font != NULL) {
         TTF_CloseFont(app->font);
         app->font = NULL;
@@ -51,6 +52,10 @@ void app_shutdown(App *app) {
 
 void app_update(App *app) {
     sim_step(&app->circuit);
+}
+
+float app_wire_hit_tolerance(const App *app) {
+    return WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
 }
 
 void app_get_tool_footprint(Tool tool, int *out_w, int *out_h) {
@@ -77,8 +82,7 @@ static void find_snap_target_at(App *app, int gx, int gy, int *out_component_id,
         *out_component_id = pin_comp;
         return;
     }
-    float tolerance = WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
-    int wid = circuit_find_wire_at(&app->circuit, (float)gx, (float)gy, tolerance);
+    int wid = circuit_find_wire_at(&app->circuit, (float)gx, (float)gy, app_wire_hit_tolerance(app));
     if (wid >= 0) *out_wire_id = wid;
 }
 

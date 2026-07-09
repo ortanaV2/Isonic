@@ -21,16 +21,7 @@ TTF_Font *text_util_load_font(int point_size) {
 }
 
 void text_util_draw(SDL_Renderer *renderer, TTF_Font *font, const char *text, int x, int y, SDL_Color color) {
-    if (font == NULL || text == NULL || text[0] == '\0') return;
-    SDL_Surface *surface = TTF_RenderUTF8_Blended(font, text, color);
-    if (surface == NULL) return;
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
-    if (texture != NULL) {
-        SDL_Rect dst = { x, y, surface->w, surface->h };
-        SDL_RenderCopy(renderer, texture, NULL, &dst);
-        SDL_DestroyTexture(texture);
-    }
-    SDL_FreeSurface(surface);
+    text_util_draw_scaled(renderer, font, text, x, y, color, 1.0f);
 }
 
 void text_util_draw_scaled(SDL_Renderer *renderer, TTF_Font *font, const char *text, int x, int y, SDL_Color color, float scale) {
