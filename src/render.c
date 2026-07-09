@@ -14,19 +14,27 @@ static const SDL_Color IC_BORDER_COLOR = { 190, 190, 196, 255 };
 
 /* Thickness as a fraction of the current grid cell size, not a flat pixel
    count, so wires/stubs/borders stay proportionally the same thickness
-   relative to the drawn content at any zoom level (matches ~3px at zoom 1.0). */
+   relative to the drawn content at any zoom level (matches ~3px at zoom 1.0).
+   Stays a float for smooth (non-stepped) scaling. Unlike connection dots,
+   this DOES need its own floor: a genuinely sub-pixel-wide diagonal line
+   barely covers any real sample in the 2x supersample buffer, so after the
+   downscale it reads as faded/see-through rather than merely thin - fading
+   the alpha to compensate just made it look more transparent, not less, so
+   the floor keeps a solid, fully-opaque minimum width instead. */
 #define WIRE_THICKNESS_CELL_FRACTION 0.15f
+#define WIRE_THICKNESS_MIN_PX 1.5f
 
-static int wire_thickness_px(float cell) {
-    int t = (int)lroundf(cell * WIRE_THICKNESS_CELL_FRACTION);
-    return t < 1 ? 1 : t;
+static float wire_thickness_px(float cell) {
+    float t = cell * WIRE_THICKNESS_CELL_FRACTION;
+    return t < WIRE_THICKNESS_MIN_PX ? WIRE_THICKNESS_MIN_PX : t;
 }
 
+/* Same reasoning as wire_thickness_px above - no extra floor here either, see
+   draw_filled_circle's own 1px-radius floor for the actual safety net. */
 #define CONNECTION_DOT_CELL_FRACTION 0.12f
 
-static int connection_dot_radius_px(float cell) {
-    int r = (int)lroundf(cell * CONNECTION_DOT_CELL_FRACTION);
-    return r < 1 ? 1 : r;
+static float connection_dot_radius_px(float cell) {
+    return cell * CONNECTION_DOT_CELL_FRACTION;
 }
 
 /* Radius of the pin-1 orientation notch, same idea as a real DIP package's
@@ -63,10 +71,9 @@ static SDL_Color signal_color(SignalValue v) {
    since its edges were quantized to whole pixel rows rather than true
    sub-pixel positions the AA downscale could actually smooth out). */
 static void draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, float radius) {
-    if (radius < 1.0f) radius = 1.0f;
-
     Uint8 r, g, b, a;
     SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
+    if (radius < 1.0f) radius = 1.0f;
     SDL_Color col = { r, g, b, a };
 
     SDL_Vertex verts[CIRCLE_SEGMENTS + 1];
@@ -94,17 +101,17 @@ static void draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, float rad
    diagonals inconsistently (visibly looked like 2-3 separate thin lines
    instead of one solid band). A round cap is added at both ends (same color)
    so two lines meeting at any angle - IC border corners, wire-to-wire and
-   wire-to-stub joints - blend smoothly instead of leaving a flat-edged notch. */
-static void draw_thick_line(SDL_Renderer *renderer, int x0, int y0, int x1, int y1, int thickness) {
-    if (thickness <= 1) {
-        SDL_RenderDrawLine(renderer, x0, y0, x1, y1);
-        return;
-    }
+   wire-to-stub joints - blend smoothly instead of leaving a flat-edged notch.
+   thickness is a float; wire_thickness_px already floors it above the point
+   where it would otherwise fade into the supersample downscale (see its
+   comment), so there's no separate fade/floor logic needed in here. */
+static void draw_thick_line(SDL_Renderer *renderer, int x0, int y0, int x1, int y1, float thickness) {
     float dx = (float)(x1 - x0), dy = (float)(y1 - y0);
     float len = sqrtf(dx * dx + dy * dy);
     if (len < 0.0001f) return;
     float nx = -dy / len, ny = dx / len;
     float hw = thickness * 0.5f;
+    if (hw < 0.5f) hw = 0.5f; /* defensive floor only, in case of a future caller with no floor of its own */
 
     Uint8 r, g, b, a;
     SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
@@ -121,8 +128,7 @@ static void draw_thick_line(SDL_Renderer *renderer, int x0, int y0, int x1, int 
 
     /* uses the exact same hw as the quad above (no independent rounding) so the
        cap radius can never end up larger than the line's real half-width -
-       that mismatch was making the cap visibly poke out sideways at some
-       zoom levels, whenever the integer thickness rounded up unevenly */
+       a mismatch there would make the cap visibly poke out sideways */
     SDL_SetRenderDrawColor(renderer, r, g, b, a);
     draw_filled_circle(renderer, x0, y0, hw);
     draw_filled_circle(renderer, x1, y1, hw);
@@ -139,7 +145,7 @@ static void draw_thick_line(SDL_Renderer *renderer, int x0, int y0, int x1, int 
    segment directions like a general polyline stroke would. */
 #define NOTCH_ARC_SEGMENTS 16
 
-static void draw_arc_strip(SDL_Renderer *renderer, float cx, float cy, float radius, float angle_from, float angle_to, int thickness) {
+static void draw_arc_strip(SDL_Renderer *renderer, float cx, float cy, float radius, float angle_from, float angle_to, float thickness) {
     float hw = thickness * 0.5f;
     if (hw < 0.5f) hw = 0.5f;
 
@@ -175,7 +181,7 @@ static void draw_arc_strip(SDL_Renderer *renderer, float cx, float cy, float rad
    component_init_ic) always sits just to its left. The straight edge is split
    in two around the notch instead of drawn full-width underneath it, so the
    arc reads as an actual cut rather than a bump added on top of an intact line. */
-static void draw_top_edge_with_notch(SDL_Renderer *renderer, int left_x, int top_y, int body_w_px, float cell, int thickness) {
+static void draw_top_edge_with_notch(SDL_Renderer *renderer, int left_x, int top_y, int body_w_px, float cell, float thickness) {
     float radius = notch_radius_px(cell);
     float cx = left_x + body_w_px * 0.5f;
 
@@ -217,7 +223,7 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
     SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
     draw_thick_line(renderer, sfx, sfy, stx, sty, wire_thickness_px(cell));
 
-    int r = connection_dot_radius_px(cell);
+    float r = connection_dot_radius_px(cell);
     SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
     draw_filled_circle(renderer, sfx, sfy, r);
     draw_filled_circle(renderer, stx, sty, r);
@@ -261,7 +267,7 @@ static void draw_lone_connection_dot(SDL_Renderer *renderer, const Camera *cam, 
 
     int sx, sy;
     camera_grid_to_screen(cam, x, y, &sx, &sy);
-    int r = connection_dot_radius_px(camera_cell_px(cam));
+    float r = connection_dot_radius_px(camera_cell_px(cam));
     SDL_SetRenderDrawColor(renderer, CONNECTION_COLOR.r, CONNECTION_COLOR.g, CONNECTION_COLOR.b, 255);
     draw_filled_circle(renderer, sx, sy, r);
 }
@@ -277,7 +283,7 @@ static void render_wire_dots(SDL_Renderer *renderer, const Camera *cam, const Ci
 }
 
 static void render_junctions(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit) {
-    int r = connection_dot_radius_px(camera_cell_px(cam));
+    float r = connection_dot_radius_px(camera_cell_px(cam));
     SDL_SetRenderDrawColor(renderer, CONNECTION_COLOR.r, CONNECTION_COLOR.g, CONNECTION_COLOR.b, 255);
     for (int i = 0; i < circuit->junction_count; i++) {
         int sx, sy;
@@ -296,7 +302,7 @@ static void render_wire_endpoint_marks(SDL_Renderer *renderer, const Camera *cam
     int sfx, sfy, stx, sty;
     camera_grid_to_screen(cam, w->from_x, w->from_y, &sfx, &sfy);
     camera_grid_to_screen(cam, w->to_x, w->to_y, &stx, &sty);
-    int r = connection_dot_radius_px(camera_cell_px(cam));
+    float r = connection_dot_radius_px(camera_cell_px(cam));
     SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
     draw_filled_circle(renderer, sfx, sfy, r);
     draw_filled_circle(renderer, stx, sty, r);
@@ -382,7 +388,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     float scale = label_scale(cell);
     int w = (int)lroundf(body_w_cells * cell);
     int h = (int)lroundf(body_h_cells * cell);
-    int thickness = wire_thickness_px(cell);
+    float thickness = wire_thickness_px(cell);
 
     /* pin edge anchors (screen-space) are computed once and reused by both the
        stub pass and the label pass below, instead of recomputing per pin twice */
