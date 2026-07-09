@@ -57,8 +57,12 @@ void circuit_init(Circuit *circuit);
 int circuit_add_ic(Circuit *circuit, int grid_x, int grid_y, const IC_Def *def);
 void circuit_remove_component(Circuit *circuit, int component_id);
 
-/* Returns the new wire id, or -1 if from == to. Rebuilds nets. For INPUT/OUTPUT
-   kind, from/to is the terminal/open end respectively (see Wire above). */
+/* Returns the id of the first wire segment added, or -1 if from == to. Rebuilds
+   nets. For INPUT/OUTPUT kind, from/to is the terminal/open end respectively
+   (see Wire above). If this wire crosses an existing wire's endpoint, or an
+   existing wire crosses this one's, both are split into independent segments
+   at that point instead of merely tapping into an unbroken run - so every
+   segment stays separately selectable and deletable. */
 int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind);
 void circuit_remove_wire(Circuit *circuit, int wire_id);
 

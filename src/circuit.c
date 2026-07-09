@@ -32,6 +32,122 @@ static int find_free_wire_slot(Circuit *circuit) {
     return -1;
 }
 
+/* Strict interior test: true if P is collinear with and strictly between A and B
+   (excludes the endpoints themselves - those are handled by the coincidence pass
+   in circuit_rebuild_nets). */
+static int point_on_segment_interior(int px, int py, int ax, int ay, int bx, int by) {
+    long long cross = (long long)(px - ax) * (by - ay) - (long long)(py - ay) * (bx - ax);
+    if (cross != 0) return 0;
+    long long dot = (long long)(px - ax) * (bx - ax) + (long long)(py - ay) * (by - ay);
+    if (dot <= 0) return 0;
+    long long len2 = (long long)(bx - ax) * (bx - ax) + (long long)(by - ay) * (by - ay);
+    return dot < len2;
+}
+
+/* Splits wire[wire_idx] into two independent wires at (px, py), which must lie
+   strictly inside it. The original keeps its "from" end (and therefore its
+   kind/terminal, see Wire's from_x/from_y comment) and simply gets shortened;
+   the new tail piece is always a plain WIRE_KIND_NORMAL segment. */
+static void split_wire_slot(Circuit *circuit, int wire_idx, int px, int py) {
+    int new_idx = find_free_wire_slot(circuit);
+    if (new_idx < 0) return;
+    Wire *w = &circuit->wires[wire_idx];
+    Wire *nw = &circuit->wires[new_idx];
+    nw->in_use = 1;
+    nw->from_x = px;
+    nw->from_y = py;
+    nw->to_x = w->to_x;
+    nw->to_y = w->to_y;
+    nw->selected = 0;
+    nw->kind = WIRE_KIND_NORMAL;
+    nw->input_value = 0;
+    if (new_idx + 1 > circuit->wire_high_water) circuit->wire_high_water = new_idx + 1;
+
+    w->to_x = px;
+    w->to_y = py;
+}
+
+/* Splits every existing wire that (px, py) lands on the interior of, so a new
+   wire ending/starting there forms a real junction between independent wires
+   instead of just tapping into one long unbroken segment. */
+static void split_wires_containing_point(Circuit *circuit, int px, int py) {
+    int hw = circuit->wire_high_water;
+    for (int i = 0; i < hw; i++) {
+        Wire *w = &circuit->wires[i];
+        if (!w->in_use) continue;
+        if (point_on_segment_interior(px, py, w->from_x, w->from_y, w->to_x, w->to_y)) {
+            split_wire_slot(circuit, i, px, py);
+        }
+    }
+}
+
+typedef struct {
+    int x, y;
+    long long t; /* position along the new segment, for ordering the split points */
+} SplitPoint;
+
+static int compare_split_point(const void *pa, const void *pb) {
+    long long ta = ((const SplitPoint *)pa)->t;
+    long long tb = ((const SplitPoint *)pb)->t;
+    return (ta > tb) - (ta < tb);
+}
+
+/* Adds (from -> to) as one or more consecutive wire segments, pre-split at any
+   point where an existing wire's endpoint lands on this new wire's interior -
+   the mirror image of split_wires_containing_point above. Only the first
+   segment carries kind/input_value, since the terminal end never moves.
+   Returns the id of the first segment, or -1 if none could be allocated. */
+static int insert_wire_chain(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind) {
+    static SplitPoint pts[MAX_WIRES * 2];
+    int pt_count = 0;
+    long long dx = to_x - from_x, dy = to_y - from_y;
+
+    for (int i = 0; i < circuit->wire_high_water; i++) {
+        const Wire *w = &circuit->wires[i];
+        if (!w->in_use) continue;
+        int ex[2] = { w->from_x, w->to_x };
+        int ey[2] = { w->from_y, w->to_y };
+        for (int e = 0; e < 2; e++) {
+            if (!point_on_segment_interior(ex[e], ey[e], from_x, from_y, to_x, to_y)) continue;
+            int dup = 0;
+            for (int k = 0; k < pt_count; k++) {
+                if (pts[k].x == ex[e] && pts[k].y == ey[e]) { dup = 1; break; }
+            }
+            if (dup || pt_count >= MAX_WIRES * 2) continue;
+            pts[pt_count].x = ex[e];
+            pts[pt_count].y = ey[e];
+            pts[pt_count].t = (long long)(ex[e] - from_x) * dx + (long long)(ey[e] - from_y) * dy;
+            pt_count++;
+        }
+    }
+    qsort(pts, pt_count, sizeof(SplitPoint), compare_split_point);
+
+    int first_idx = -1;
+    int seg_from_x = from_x, seg_from_y = from_y;
+    WireKind seg_kind = kind;
+    for (int i = 0; i <= pt_count; i++) {
+        int seg_to_x = (i < pt_count) ? pts[i].x : to_x;
+        int seg_to_y = (i < pt_count) ? pts[i].y : to_y;
+        int idx = find_free_wire_slot(circuit);
+        if (idx < 0) break;
+        Wire *w = &circuit->wires[idx];
+        w->in_use = 1;
+        w->from_x = seg_from_x;
+        w->from_y = seg_from_y;
+        w->to_x = seg_to_x;
+        w->to_y = seg_to_y;
+        w->selected = 0;
+        w->kind = seg_kind;
+        w->input_value = 0;
+        if (idx + 1 > circuit->wire_high_water) circuit->wire_high_water = idx + 1;
+        if (first_idx < 0) first_idx = idx;
+        seg_from_x = seg_to_x;
+        seg_from_y = seg_to_y;
+        seg_kind = WIRE_KIND_NORMAL;
+    }
+    return first_idx;
+}
+
 int circuit_add_ic(Circuit *circuit, int grid_x, int grid_y, const IC_Def *def) {
     int idx = find_free_component_slot(circuit);
     if (idx < 0) return -1;
@@ -53,22 +169,19 @@ void circuit_remove_component(Circuit *circuit, int component_id) {
 
 int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind) {
     if (from_x == to_x && from_y == to_y) return -1;
-    int idx = find_free_wire_slot(circuit);
-    if (idx < 0) return -1;
 
-    Wire *w = &circuit->wires[idx];
-    w->in_use = 1;
-    w->from_x = from_x;
-    w->from_y = from_y;
-    w->to_x = to_x;
-    w->to_y = to_y;
-    w->selected = 0;
-    w->kind = kind;
-    w->input_value = 0;
-    if (idx + 1 > circuit->wire_high_water) circuit->wire_high_water = idx + 1;
+    /* If either endpoint of the new wire lands mid-span on an existing wire,
+       split that wire there first so the result is a real junction between
+       independent wires, not just a tap on one long unbroken segment. */
+    split_wires_containing_point(circuit, from_x, from_y);
+    split_wires_containing_point(circuit, to_x, to_y);
+
+    /* Mirror image: pre-split the new wire itself at any existing endpoint
+       that falls on its interior. */
+    int first_idx = insert_wire_chain(circuit, from_x, from_y, to_x, to_y, kind);
 
     circuit_rebuild_nets(circuit);
-    return idx;
+    return first_idx;
 }
 
 void circuit_remove_wire(Circuit *circuit, int wire_id) {
@@ -97,17 +210,6 @@ static int compare_point_entry(const void *pa, const void *pb) {
     const PointEntry *b = (const PointEntry *)pb;
     if (a->x != b->x) return a->x - b->x;
     return a->y - b->y;
-}
-
-/* Strict interior test: true if P is collinear with and strictly between A and B
-   (excludes the endpoints themselves - those are handled by the coincidence pass). */
-static int point_on_segment_interior(int px, int py, int ax, int ay, int bx, int by) {
-    long long cross = (long long)(px - ax) * (by - ay) - (long long)(py - ay) * (bx - ax);
-    if (cross != 0) return 0;
-    long long dot = (long long)(px - ax) * (bx - ax) + (long long)(py - ay) * (by - ay);
-    if (dot <= 0) return 0;
-    long long len2 = (long long)(bx - ax) * (bx - ax) + (long long)(by - ay) * (by - ay);
-    return dot < len2;
 }
 
 static void add_junction(Circuit *circuit, int x, int y) {

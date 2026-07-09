@@ -43,12 +43,16 @@ static void cancel_transient_actions(App *app) {
     app->active_tool = TOOL_SELECT;
 }
 
+static void set_active_tool(App *app, Tool tool) {
+    cancel_transient_actions(app);
+    clear_selection(app); /* switching tools means we're moving on, drop any stale selection */
+    app->active_tool = tool;
+}
+
 static void handle_taskbar_click(App *app, int mx, int my) {
     int tool = taskbar_hit_test(&app->taskbar, mx, my);
     if (tool >= 0) {
-        cancel_transient_actions(app);
-        clear_selection(app); /* switching tools means we're moving on, drop any stale selection */
-        app->active_tool = (Tool)tool;
+        set_active_tool(app, (Tool)tool);
     }
 }
 
@@ -301,6 +305,10 @@ void app_handle_event(App *app, const SDL_Event *event) {
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 cancel_transient_actions(app);
                 clear_selection(app);
+            } else if (sc == SDL_SCANCODE_W) {
+                set_active_tool(app, TOOL_WIRE);
+            } else if (sc == SDL_SCANCODE_SPACE) {
+                set_active_tool(app, TOOL_SELECT);
             }
             break;
         }
