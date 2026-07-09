@@ -19,7 +19,16 @@ void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) 
         c->pin_count = MAX_PINS_PER_COMPONENT;
     }
 
-    int left_seen = 0, right_seen = 0;
+    int body_w, body_h;
+    ic_dip_body_size(def->pin_count, &body_w, &body_h);
+    (void)body_h; /* only the width feeds into pin placement below */
+    int per_side = def->pin_count / 2;
+
+    /* Real DIP layout: pin 1 starts top-left (nearest the orientation notch,
+       see render_ic_body) and counts down the left side; pin per_side+1
+       continues at the bottom-right and counts back up to the top-right,
+       ending opposite pin 1. Always exactly per_side pins on each side -
+       side/position are derived from pin_number, not authored per IC. */
     for (int i = 0; i < c->pin_count; i++) {
         const IC_PinDef *pd = &def->pins[i];
         Pin *p = &c->pins[i];
@@ -28,14 +37,12 @@ void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) 
         p->value = SIG_UNKNOWN;
         /* stub tips sit one cell outside the body so wires attach past the
            edge, matching a schematic symbol rather than a flush PCB footprint */
-        if (pd->side == 0) {
+        if (pd->pin_number <= per_side) {
             p->local_dx = -1;
-            p->local_dy = 1 + left_seen;
-            left_seen++;
+            p->local_dy = pd->pin_number;
         } else {
-            p->local_dx = def->width + 1;
-            p->local_dy = 1 + right_seen;
-            right_seen++;
+            p->local_dx = body_w + 1;
+            p->local_dy = per_side - (pd->pin_number - per_side) + 1;
         }
     }
 }
@@ -57,6 +64,5 @@ int component_find_pin_at(const Component *c, int x, int y) {
 }
 
 void component_get_size(const Component *c, int *out_w, int *out_h) {
-    *out_w = c->ic_def->width;
-    *out_h = c->ic_def->height;
+    ic_dip_body_size(c->ic_def->pin_count, out_w, out_h);
 }

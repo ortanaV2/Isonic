@@ -23,10 +23,12 @@ void app_init(App *app, int window_w, int window_h) {
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
 
-    app->dragging = 0;
-    app->drag_offset_x = 0;
-    app->drag_offset_y = 0;
+    app->drag_kind = DRAG_NONE;
+    app->drag_last_gx = 0;
+    app->drag_last_gy = 0;
+    app->drag_wire_id = -1;
     app->drag_attach_count = 0;
+    app->drag_node_count = 0;
 
     app->panning = 0;
 
@@ -62,8 +64,7 @@ void app_get_tool_footprint(Tool tool, int *out_w, int *out_h) {
     if (tool == TOOL_PLACE_SN7408) {
         const IC_Def *def = ic_registry_get("SN7408");
         if (def != NULL) {
-            *out_w = def->width;
-            *out_h = def->height;
+            ic_dip_body_size(def->pin_count, out_w, out_h);
             return;
         }
     }
@@ -86,18 +87,50 @@ static void find_snap_target_at(App *app, int gx, int gy, int *out_component_id,
     if (wid >= 0) *out_wire_id = wid;
 }
 
+/* Whatever the mouse is over - an IC body or a wire - gets the same temporary
+   highlight, regardless of which tool is active, so hovering always previews
+   what's underneath the cursor. */
+static void find_hover_target_at(App *app, int mx, int my, int *out_component_id, int *out_wire_id) {
+    *out_component_id = -1;
+    *out_wire_id = -1;
+
+    /* box hit-test needs "which cell is the cursor over", not the nearest
+       lattice point - see camera_screen_to_grid_floor */
+    int box_gx, box_gy;
+    float fx, fy;
+    camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+    camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
+
+    int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
+    if (comp_id >= 0) {
+        *out_component_id = comp_id;
+        return;
+    }
+    int wid = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+    if (wid >= 0) *out_wire_id = wid;
+}
+
 void app_render(App *app, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
     SDL_RenderClear(renderer);
 
     /* while dragging out a wire, highlight both what it's anchored to (fixed
        for the whole drag) and whatever the cursor is currently hovering, so
-       the start point stays visibly marked the entire time, not just briefly */
+       the start point stays visibly marked the entire time, not just briefly.
+       Otherwise (any tool, as long as nothing exclusive is already using the
+       highlight - an active wire drag or a Select-mode drag), highlight
+       whatever the mouse is simply hovering over. */
     int snap_component_a = -1, snap_wire_a = -1;
     int snap_component_b = -1, snap_wire_b = -1;
     if (app->wiring) {
         find_snap_target_at(app, app->wire_from_gx, app->wire_from_gy, &snap_component_a, &snap_wire_a);
         find_snap_target_at(app, app->wire_cursor_gx, app->wire_cursor_gy, &snap_component_b, &snap_wire_b);
+    } else if (app->drag_kind == DRAG_NONE) {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        if (my >= TASKBAR_HEIGHT) {
+            find_hover_target_at(app, mx, my, &snap_component_a, &snap_wire_a);
+        }
     }
 
     render_grid(renderer, &app->camera, app->window_w, app->window_h);

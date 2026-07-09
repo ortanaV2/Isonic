@@ -39,7 +39,7 @@ void component_pin_world_pos(const Component *c, int pin_index, int *out_x, int 
 /* Returns pin index whose absolute position matches (x,y), or -1 if none. */
 int component_find_pin_at(const Component *c, int x, int y);
 
-/* Footprint size in grid cells (ic_def->width/height). */
+/* Footprint size in grid cells - see ic_dip_body_size in ic_registry.h. */
 void component_get_size(const Component *c, int *out_w, int *out_h);
 
 #endif

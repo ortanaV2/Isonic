@@ -19,3 +19,13 @@ const IC_Def *ic_registry_get(const char *name) {
     }
     return NULL;
 }
+
+/* Fixed body width for every standard DIP package - only the height (driven
+   by pin count) varies, matching how real DIP chips scale. */
+#define IC_DIP_WIDTH 4
+
+void ic_dip_body_size(int pin_count, int *out_w, int *out_h) {
+    int per_side = pin_count / 2;
+    *out_w = IC_DIP_WIDTH;
+    *out_h = per_side + 1;
+}

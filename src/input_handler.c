@@ -34,10 +34,21 @@ static void delete_selection(App *app) {
     }
 }
 
+/* Unmarks the wires temporarily highlighted for a DRAG_WIRE_NODE (see
+   drag_node_* in app.h) - they aren't tracked by selected_wire_id, since
+   several wires can share one node, so they need their own cleanup. */
+static void clear_wire_node_marks(App *app) {
+    for (int i = 0; i < app->drag_node_count; i++) {
+        app->circuit.wires[app->drag_node_wire_id[i]].selected = 0;
+    }
+    app->drag_node_count = 0;
+}
+
 static void cancel_transient_actions(App *app) {
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
-    app->dragging = 0;
+    clear_wire_node_marks(app);
+    app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
     app->panning = 0;
     app->active_tool = TOOL_SELECT;
@@ -56,8 +67,12 @@ static void handle_taskbar_click(App *app, int mx, int my) {
     }
 }
 
-static void handle_right_click(App *app, int gx, int gy, float fx, float fy) {
-    int comp_id = circuit_find_component_at(&app->circuit, gx, gy);
+static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
+    /* box hit-test needs "which cell is the cursor over", not the nearest
+       lattice point - see camera_screen_to_grid_floor */
+    int box_gx, box_gy;
+    camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+    int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
     if (comp_id >= 0) {
         if (comp_id == app->selected_component_id) app->selected_component_id = -1;
         circuit_remove_component(&app->circuit, comp_id);
@@ -70,41 +85,123 @@ static void handle_right_click(App *app, int gx, int gy, float fx, float fy) {
     }
 }
 
-/* Snapshots which wire endpoints currently sit exactly on one of the
-   component's pin tips, so they can be dragged along with it (see plan
-   Revision 1: wires have no component reference, so this must be simulated). */
-static void snapshot_drag_attachments(App *app, int comp_id) {
+/* Snapshots which wire endpoints currently sit exactly on one of the given
+   anchor points, so they can be dragged along too (see plan Revision 1: wires
+   have no component/wire reference, so this must be simulated). Every anchor
+   in a single drag moves by the same per-frame delta (components only
+   translate, they don't rotate, and a dragged wire body moves rigidly), so
+   there's no need to remember which anchor an attachment came from - see
+   apply_drag_attachments below. exclude_wire_id (-1 for none) keeps a wire
+   being body-dragged from attaching to itself. */
+static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int anchor_count, int exclude_wire_id) {
     app->drag_attach_count = 0;
-    Component *c = &app->circuit.components[comp_id];
-    for (int pi = 0; pi < c->pin_count && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; pi++) {
-        int px, py;
-        component_pin_world_pos(c, pi, &px, &py);
+    for (int ai = 0; ai < anchor_count && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; ai++) {
+        int px = anchors[ai].x, py = anchors[ai].y;
         for (int wi = 0; wi < app->circuit.wire_high_water && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; wi++) {
+            if (wi == exclude_wire_id) continue;
             Wire *w = &app->circuit.wires[wi];
             if (!w->in_use) continue;
             if (w->from_x == px && w->from_y == py) {
                 app->drag_attach_wire_id[app->drag_attach_count] = wi;
                 app->drag_attach_wire_end[app->drag_attach_count] = 0;
-                app->drag_attach_pin_index[app->drag_attach_count] = pi;
                 app->drag_attach_count++;
             }
             if (app->drag_attach_count < MAX_DRAG_ATTACHMENTS && w->to_x == px && w->to_y == py) {
                 app->drag_attach_wire_id[app->drag_attach_count] = wi;
                 app->drag_attach_wire_end[app->drag_attach_count] = 1;
-                app->drag_attach_pin_index[app->drag_attach_count] = pi;
                 app->drag_attach_count++;
             }
         }
     }
 }
 
-static void begin_drag(App *app, int comp_id, int gx, int gy) {
+static void apply_drag_attachments(App *app, int dx, int dy) {
+    for (int i = 0; i < app->drag_attach_count; i++) {
+        Wire *w = &app->circuit.wires[app->drag_attach_wire_id[i]];
+        if (app->drag_attach_wire_end[i] == 0) {
+            w->from_x += dx;
+            w->from_y += dy;
+        } else {
+            w->to_x += dx;
+            w->to_y += dy;
+        }
+    }
+}
+
+static void begin_component_drag(App *app, int comp_id, int gx, int gy) {
     select_component(app, comp_id);
-    app->dragging = 1;
+    app->drag_kind = DRAG_COMPONENT;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
     Component *c = &app->circuit.components[comp_id];
-    app->drag_offset_x = gx - c->grid_x;
-    app->drag_offset_y = gy - c->grid_y;
-    snapshot_drag_attachments(app, comp_id);
+    GridPoint anchors[MAX_PINS_PER_COMPONENT];
+    for (int pi = 0; pi < c->pin_count; pi++) {
+        component_pin_world_pos(c, pi, &anchors[pi].x, &anchors[pi].y);
+    }
+    snapshot_drag_attachments(app, anchors, c->pin_count, -1);
+}
+
+/* Moving a wire's body (grabbed away from either endpoint) translates the
+   whole wire rigidly, dragging along anything attached at either end - same
+   as moving a component. */
+static void begin_wire_body_drag(App *app, int wire_id, int gx, int gy) {
+    select_wire(app, wire_id);
+    app->drag_kind = DRAG_WIRE_BODY;
+    app->drag_wire_id = wire_id;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+    Wire *w = &app->circuit.wires[wire_id];
+    GridPoint anchors[2] = { { w->from_x, w->from_y }, { w->to_x, w->to_y } };
+    snapshot_drag_attachments(app, anchors, 2, wire_id);
+}
+
+/* A couple pixels of slack around the exact node point, same idea as
+   TERMINAL_HIT_PADDING_PX below - reuses the existing wire hit tolerance so
+   it stays consistent with wire-body picking. */
+static int find_wire_node_at(App *app, float fx, float fy, int *out_x, int *out_y) {
+    float tol = app_wire_hit_tolerance(app);
+    float best_d2 = tol * tol;
+    int found = 0;
+    for (int i = 0; i < app->circuit.wire_high_water; i++) {
+        const Wire *w = &app->circuit.wires[i];
+        if (!w->in_use) continue;
+        float dfx = fx - (float)w->from_x, dfy = fy - (float)w->from_y;
+        float d0 = dfx * dfx + dfy * dfy;
+        if (d0 <= best_d2) { best_d2 = d0; *out_x = w->from_x; *out_y = w->from_y; found = 1; }
+        float dtx = fx - (float)w->to_x, dty = fy - (float)w->to_y;
+        float d1 = dtx * dtx + dty * dty;
+        if (d1 <= best_d2) { best_d2 = d1; *out_x = w->to_x; *out_y = w->to_y; found = 1; }
+    }
+    return found;
+}
+
+/* Moving a wire node grabs every wire endpoint exactly coincident with the
+   grabbed point and moves them together - so dragging a junction keeps it a
+   junction, instead of tearing one wire's end away from the others. They're
+   marked .selected for the duration so the node being moved is visible. */
+static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int gy) {
+    clear_selection(app);
+    app->drag_kind = DRAG_WIRE_NODE;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+    app->drag_node_count = 0;
+    Circuit *circuit = &app->circuit;
+    for (int wi = 0; wi < circuit->wire_high_water && app->drag_node_count < MAX_DRAG_ATTACHMENTS; wi++) {
+        Wire *w = &circuit->wires[wi];
+        if (!w->in_use) continue;
+        if (w->from_x == node_x && w->from_y == node_y) {
+            app->drag_node_wire_id[app->drag_node_count] = wi;
+            app->drag_node_wire_end[app->drag_node_count] = 0;
+            app->drag_node_count++;
+            w->selected = 1;
+        }
+        if (app->drag_node_count < MAX_DRAG_ATTACHMENTS && w->to_x == node_x && w->to_y == node_y) {
+            app->drag_node_wire_id[app->drag_node_count] = wi;
+            app->drag_node_wire_end[app->drag_node_count] = 1;
+            app->drag_node_count++;
+            w->selected = 1;
+        }
+    }
 }
 
 static WireKind tool_to_wire_kind(Tool tool) {
@@ -176,16 +273,30 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
 
     /* TOOL_SELECT - wires are only ever started from the Wire/Input/Output tool
        now; Select mode does not let you drag a new wire off a pin, even by
-       clicking one */
-    int comp_id = circuit_find_component_at(&app->circuit, gx, gy);
+       clicking one. It does let you drag a wire's node (every endpoint
+       coincident at that point moves together), or the body of a wire/IC
+       (moving it as a whole, dragging along anything attached at its
+       endpoints/pins). Node-picking goes first since it's the most precise
+       target and must win over a component/wire body sitting under it. */
+    int node_x, node_y;
+    if (find_wire_node_at(app, fx, fy, &node_x, &node_y)) {
+        begin_wire_node_drag(app, node_x, node_y, gx, gy);
+        return;
+    }
+
+    /* box hit-test needs "which cell is the cursor over", not the nearest
+       lattice point (gx, gy) - see camera_screen_to_grid_floor */
+    int box_gx, box_gy;
+    camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+    int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
     if (comp_id >= 0) {
-        begin_drag(app, comp_id, gx, gy);
+        begin_component_drag(app, comp_id, gx, gy);
         return;
     }
 
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
-        select_wire(app, wire_id);
+        begin_wire_body_drag(app, wire_id, gx, gy);
         return;
     }
 
@@ -205,7 +316,8 @@ static void finish_wire(App *app, int gx, int gy) {
 }
 
 static void finish_drag(App *app) {
-    app->dragging = 0;
+    clear_wire_node_marks(app);
+    app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
 }
 
@@ -248,7 +360,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 1;
             } else if (event->button.button == SDL_BUTTON_RIGHT) {
-                handle_right_click(app, gx, gy, fx, fy);
+                handle_right_click(app, mx, my, fx, fy);
             }
             break;
         }
@@ -259,7 +371,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (app->wiring) finish_wire(app, gx, gy);
-                else if (app->dragging) finish_drag(app);
+                else if (app->drag_kind != DRAG_NONE) finish_drag(app);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 0;
             }
@@ -274,26 +386,41 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y,
                                        &app->wire_cursor_gx, &app->wire_cursor_gy);
             }
-            if (app->dragging && app->selected_component_id >= 0) {
+            if (app->drag_kind != DRAG_NONE) {
                 int gx, gy;
                 camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y, &gx, &gy);
-                Component *c = &app->circuit.components[app->selected_component_id];
-                c->grid_x = gx - app->drag_offset_x;
-                c->grid_y = gy - app->drag_offset_y;
+                int dx = gx - app->drag_last_gx;
+                int dy = gy - app->drag_last_gy;
+                if (dx != 0 || dy != 0) {
+                    app->drag_last_gx = gx;
+                    app->drag_last_gy = gy;
 
-                for (int i = 0; i < app->drag_attach_count; i++) {
-                    int px, py;
-                    component_pin_world_pos(c, app->drag_attach_pin_index[i], &px, &py);
-                    Wire *w = &app->circuit.wires[app->drag_attach_wire_id[i]];
-                    if (app->drag_attach_wire_end[i] == 0) {
-                        w->from_x = px;
-                        w->from_y = py;
-                    } else {
-                        w->to_x = px;
-                        w->to_y = py;
+                    if (app->drag_kind == DRAG_COMPONENT) {
+                        Component *c = &app->circuit.components[app->selected_component_id];
+                        c->grid_x += dx;
+                        c->grid_y += dy;
+                        apply_drag_attachments(app, dx, dy);
+                    } else if (app->drag_kind == DRAG_WIRE_BODY) {
+                        Wire *w = &app->circuit.wires[app->drag_wire_id];
+                        w->from_x += dx;
+                        w->from_y += dy;
+                        w->to_x += dx;
+                        w->to_y += dy;
+                        apply_drag_attachments(app, dx, dy);
+                    } else { /* DRAG_WIRE_NODE */
+                        for (int i = 0; i < app->drag_node_count; i++) {
+                            Wire *w = &app->circuit.wires[app->drag_node_wire_id[i]];
+                            if (app->drag_node_wire_end[i] == 0) {
+                                w->from_x += dx;
+                                w->from_y += dy;
+                            } else {
+                                w->to_x += dx;
+                                w->to_y += dy;
+                            }
+                        }
                     }
+                    circuit_rebuild_nets(&app->circuit);
                 }
-                circuit_rebuild_nets(&app->circuit);
             }
             break;
         }

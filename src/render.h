@@ -11,9 +11,11 @@ void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int wi
    oversized and scaled down - see label_scale in render.c.
    highlight_*_a/b (-1 for none) draw up to two components and two wires in
    SELECTION_COLOR for this frame only, without touching their persistent
-   .selected flag - used for the temporary "this is what you'd connect to"
-   highlight while dragging out a wire (one slot for the fixed start anchor,
-   one for whatever the cursor is currently over). */
+   .selected flag - used both for the temporary "this is what you'd connect
+   to" highlight while dragging out a wire (one slot for the fixed start
+   anchor, one for whatever the cursor is currently over), and for the global
+   mouse-hover highlight active in any tool (slot "a" only, see app.c). A
+   wire that is selected or highlighted also gets its own two endpoints marked. */
 void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit *circuit, const Camera *cam,
                      int highlight_component_a, int highlight_wire_a,
                      int highlight_component_b, int highlight_wire_b);

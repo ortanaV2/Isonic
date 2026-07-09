@@ -12,6 +12,14 @@
    app.c (the temporary "you'd connect here" highlight while dragging a wire). */
 #define WIRE_HIT_TOLERANCE_PX 6.0f
 
+/* What a Select-mode left-drag is currently moving. */
+typedef enum {
+    DRAG_NONE,
+    DRAG_COMPONENT,  /* moving a whole IC body, see selected_component_id */
+    DRAG_WIRE_BODY,  /* moving a whole wire (both endpoints), see drag_wire_id */
+    DRAG_WIRE_NODE   /* moving every wire endpoint coincident at one point */
+} DragKind;
+
 typedef struct {
     Circuit circuit;
     Camera camera;
@@ -28,17 +36,27 @@ typedef struct {
     int selected_component_id; /* -1 = none */
     int selected_wire_id;      /* -1 = none */
 
-    /* dragging the selected component with the left mouse button */
-    int dragging;
-    int drag_offset_x, drag_offset_y; /* grid offset from component origin to cursor */
+    /* dragging with the left mouse button in Select mode - a component body,
+       a whole wire body, or a wire node (every endpoint coincident at one
+       point); see DragKind above */
+    DragKind drag_kind;
+    int drag_last_gx, drag_last_gy; /* previous frame's cursor grid cell, for computing per-frame deltas */
+    int drag_wire_id;               /* which wire, only for DRAG_WIRE_BODY */
 
-    /* wires whose endpoint coincided with one of the dragged component's pins
-       at drag-start; followed along for the duration of the drag so moving a
-       component doesn't silently tear its connections (see plan Revision 1) */
+    /* DRAG_COMPONENT/DRAG_WIRE_BODY: wires whose endpoint coincided with one
+       of the dragged thing's anchor points (pins, or the wire's own two ends)
+       at drag-start; shifted by the same per-frame delta so moving something
+       doesn't silently tear its connections (see plan Revision 1) */
     int drag_attach_wire_id[MAX_DRAG_ATTACHMENTS];
     int drag_attach_wire_end[MAX_DRAG_ATTACHMENTS]; /* 0 = from, 1 = to */
-    int drag_attach_pin_index[MAX_DRAG_ATTACHMENTS];
     int drag_attach_count;
+
+    /* DRAG_WIRE_NODE: every wire endpoint exactly at the grabbed point, which
+       all move together as "the node" - also temporarily marked .selected so
+       they're visibly highlighted for the duration of the drag */
+    int drag_node_wire_id[MAX_DRAG_ATTACHMENTS];
+    int drag_node_wire_end[MAX_DRAG_ATTACHMENTS];
+    int drag_node_count;
 
     /* panning the camera with the middle mouse button */
     int panning;

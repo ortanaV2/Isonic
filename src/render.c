@@ -29,6 +29,15 @@ static int connection_dot_radius_px(float cell) {
     return r < 1 ? 1 : r;
 }
 
+/* Radius of the pin-1 orientation notch, same idea as a real DIP package's
+   half-moon cutout - small relative to the (fixed-width) IC body. */
+#define NOTCH_CELL_FRACTION 0.35f
+
+static float notch_radius_px(float cell) {
+    float r = cell * NOTCH_CELL_FRACTION;
+    return r < 2.0f ? 2.0f : r;
+}
+
 /* The font is loaded at a much higher point size than it is ever displayed at
    (see text_util_load_font call in app.c) so labels stay crisp when the
    scaled blit below magnifies them at higher zoom - rendering small and
@@ -119,11 +128,65 @@ static void draw_thick_line(SDL_Renderer *renderer, int x0, int y0, int x1, int 
     draw_filled_circle(renderer, x1, y1, hw);
 }
 
-static void draw_thick_rect(SDL_Renderer *renderer, SDL_Rect r, int thickness) {
-    draw_thick_line(renderer, r.x, r.y, r.x + r.w, r.y, thickness);
-    draw_thick_line(renderer, r.x, r.y + r.h, r.x + r.w, r.y + r.h, thickness);
-    draw_thick_line(renderer, r.x, r.y, r.x, r.y + r.h, thickness);
-    draw_thick_line(renderer, r.x + r.w, r.y, r.x + r.w, r.y + r.h, thickness);
+/* Strokes a circular arc as a single triangle-strip ribbon, instead of
+   chaining several draw_thick_line calls - each of those adds its own round
+   end caps, and at internal joints between short segments those caps bulge
+   out to both sides of the curve, which at low segment counts or small radii
+   (e.g. zoomed far out) reads as a lumpy/rectangular blob rather than a
+   smooth curve. A single strip has no internal caps to bulge, so it stays
+   smooth regardless of zoom - and since it's a true circle, the per-vertex
+   stroke normal is exactly the radial direction, no need to average adjacent
+   segment directions like a general polyline stroke would. */
+#define NOTCH_ARC_SEGMENTS 16
+
+static void draw_arc_strip(SDL_Renderer *renderer, float cx, float cy, float radius, float angle_from, float angle_to, int thickness) {
+    float hw = thickness * 0.5f;
+    if (hw < 0.5f) hw = 0.5f;
+
+    Uint8 r, g, b, a;
+    SDL_GetRenderDrawColor(renderer, &r, &g, &b, &a);
+    SDL_Color col = { r, g, b, a };
+
+    SDL_Vertex verts[(NOTCH_ARC_SEGMENTS + 1) * 2];
+    for (int i = 0; i <= NOTCH_ARC_SEGMENTS; i++) {
+        float t = (float)i / NOTCH_ARC_SEGMENTS;
+        float angle = angle_from + (angle_to - angle_from) * t;
+        float nx = cosf(angle), ny = sinf(angle); /* radial direction == stroke normal, exact for a circle */
+        float px = cx + nx * radius, py = cy + ny * radius;
+        verts[i * 2 + 0] = (SDL_Vertex){ { px + nx * hw, py + ny * hw }, col, { 0, 0 } };
+        verts[i * 2 + 1] = (SDL_Vertex){ { px - nx * hw, py - ny * hw }, col, { 0, 0 } };
+    }
+
+    int indices[NOTCH_ARC_SEGMENTS * 6];
+    for (int i = 0; i < NOTCH_ARC_SEGMENTS; i++) {
+        int base = i * 2;
+        indices[i * 6 + 0] = base + 0;
+        indices[i * 6 + 1] = base + 1;
+        indices[i * 6 + 2] = base + 2;
+        indices[i * 6 + 3] = base + 1;
+        indices[i * 6 + 4] = base + 3;
+        indices[i * 6 + 5] = base + 2;
+    }
+    SDL_RenderGeometry(renderer, NULL, verts, (NOTCH_ARC_SEGMENTS + 1) * 2, indices, NOTCH_ARC_SEGMENTS * 6);
+}
+
+/* Draws the IC body's top edge with a semicircular notch cut into its middle,
+   like the orientation marking on a real DIP package - pin 1 (see
+   component_init_ic) always sits just to its left. The straight edge is split
+   in two around the notch instead of drawn full-width underneath it, so the
+   arc reads as an actual cut rather than a bump added on top of an intact line. */
+static void draw_top_edge_with_notch(SDL_Renderer *renderer, int left_x, int top_y, int body_w_px, float cell, int thickness) {
+    float radius = notch_radius_px(cell);
+    float cx = left_x + body_w_px * 0.5f;
+
+    draw_thick_line(renderer, left_x, top_y, (int)lroundf(cx - radius), top_y, thickness);
+    draw_thick_line(renderer, (int)lroundf(cx + radius), top_y, left_x + body_w_px, top_y, thickness);
+
+    /* sweeps angle from PI down to 0 (through PI/2, not 3*PI/2) so sin(angle)
+       stays positive and the arc dips to larger y - i.e. down into the body,
+       since screen space y grows downward. Going the other way around traced
+       the mirror image, poking the notch out above the body instead. */
+    draw_arc_strip(renderer, cx, (float)top_y, radius, ISONIC_TAU * 0.5f, 0.0f, thickness);
 }
 
 void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int window_h) {
@@ -223,6 +286,22 @@ static void render_junctions(SDL_Renderer *renderer, const Camera *cam, const Ci
     }
 }
 
+/* Selected/highlighted wires get their own two endpoints marked in
+   SELECTION_COLOR, drawn on top of whatever render_wire_dots/render_junctions
+   already put there - even an "ordinary" 1-to-1 connection that normally has
+   no dot at all gets one while its wire is selected/hovered, so the grab
+   points a Select-mode drag would move are always visible. */
+static void render_wire_endpoint_marks(SDL_Renderer *renderer, const Camera *cam, const Wire *w, int highlighted) {
+    if (!w->selected && !highlighted) return;
+    int sfx, sfy, stx, sty;
+    camera_grid_to_screen(cam, w->from_x, w->from_y, &sfx, &sfy);
+    camera_grid_to_screen(cam, w->to_x, w->to_y, &stx, &sty);
+    int r = connection_dot_radius_px(camera_cell_px(cam));
+    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
+    draw_filled_circle(renderer, sfx, sfy, r);
+    draw_filled_circle(renderer, stx, sty, r);
+}
+
 int render_wire_terminal_bounds(TTF_Font *font_large, const Camera *cam, const Wire *w, SignalValue value, SDL_Rect *out_rect) {
     if (w->kind == WIRE_KIND_NORMAL || font_large == NULL) return 0;
     float cell = camera_cell_px(cam);
@@ -285,19 +364,24 @@ static void render_wire_terminal(SDL_Renderer *renderer, TTF_Font *font_large, c
     text_util_draw_scaled(renderer, font_large, text, bounds.x, bounds.y, label_color, scale);
 }
 
-/* Schematic-symbol style IC: plain rectangle body, pins drawn as short stubs
-   poking out past the edge with a dot at the tip, and pin names labeled
-   inside the body next to the stub - not a physical DIP/PCB footprint.
-   Pin dots are NOT drawn here - see render_component_pin_dots, called later
-   in a dedicated top layer so a stub line can never slice back through a dot. */
+/* Schematic-symbol style IC: fixed-width rectangle body sized by pin count
+   (see ic_dip_body_size), a real-DIP-style pin-1 notch on the top edge, pins
+   drawn as short stubs poking out past the edge with a dot at the tip, and
+   pin names labeled inside the body next to the stub - not a physical
+   DIP/PCB footprint. Pin dots are NOT drawn here - see
+   render_component_pin_dots, called later in a dedicated top layer so a stub
+   line can never slice back through a dot. */
 static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const Component *c, int highlighted) {
     const IC_Def *def = c->ic_def;
+    int body_w_cells, body_h_cells;
+    ic_dip_body_size(def->pin_count, &body_w_cells, &body_h_cells);
+
     int sx, sy;
     camera_grid_to_screen(cam, c->grid_x, c->grid_y, &sx, &sy);
     float cell = camera_cell_px(cam);
     float scale = label_scale(cell);
-    int w = (int)lroundf(def->width * cell);
-    int h = (int)lroundf(def->height * cell);
+    int w = (int)lroundf(body_w_cells * cell);
+    int h = (int)lroundf(body_h_cells * cell);
     int thickness = wire_thickness_px(cell);
 
     /* pin edge anchors (screen-space) are computed once and reused by both the
@@ -306,7 +390,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     int edge_sx[MAX_PINS_PER_COMPONENT], edge_sy[MAX_PINS_PER_COMPONENT];
     for (int pi = 0; pi < c->pin_count; pi++) {
         is_left[pi] = (c->pins[pi].local_dx < 0);
-        int edge_x = is_left[pi] ? c->grid_x : c->grid_x + def->width;
+        int edge_x = is_left[pi] ? c->grid_x : c->grid_x + body_w_cells;
         int edge_y = c->grid_y + c->pins[pi].local_dy;
         camera_grid_to_screen(cam, edge_x, edge_y, &edge_sx[pi], &edge_sy[pi]);
     }
@@ -326,10 +410,12 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
         draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], stx, sty, thickness);
     }
 
-    SDL_Rect body = { sx, sy, w, h };
     SDL_Color border = (c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR;
     SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
-    draw_thick_rect(renderer, body, thickness);
+    draw_thick_line(renderer, sx, sy + h, sx + w, sy + h, thickness); /* bottom */
+    draw_thick_line(renderer, sx, sy, sx, sy + h, thickness);         /* left */
+    draw_thick_line(renderer, sx + w, sy, sx + w, sy + h, thickness); /* right */
+    draw_top_edge_with_notch(renderer, sx, sy, w, cell, thickness);
 
     if (font_large != NULL && cell >= 6.0f) {
         for (int pi = 0; pi < c->pin_count; pi++) {
@@ -385,4 +471,11 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         if (c->in_use) render_component_pin_dots(renderer, cam, circuit, c);
     }
     render_junctions(renderer, cam, circuit);
+
+    for (int i = 0; i < circuit->wire_high_water; i++) {
+        const Wire *w = &circuit->wires[i];
+        if (!w->in_use) continue;
+        int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
+        render_wire_endpoint_marks(renderer, cam, w, highlighted);
+    }
 }

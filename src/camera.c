@@ -29,6 +29,12 @@ void camera_screen_to_grid_f(const Camera *cam, int sx, int sy, float *gx, float
     *gy = (sy - cam->pan_y) / cell;
 }
 
+void camera_screen_to_grid_floor(const Camera *cam, int sx, int sy, int *gx, int *gy) {
+    float cell = camera_cell_px(cam);
+    *gx = (int)floorf((sx - cam->pan_x) / cell);
+    *gy = (int)floorf((sy - cam->pan_y) / cell);
+}
+
 void camera_pan(Camera *cam, int dx_screen, int dy_screen) {
     cam->pan_x += dx_screen;
     cam->pan_y += dy_screen;

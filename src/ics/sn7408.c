@@ -1,25 +1,25 @@
 #include "sn7408.h"
 #include "../ic_registry.h"
 
-/* Real TI SN7408 pinout (Quad 2-Input AND Gate) drives eval() indexing below
-   (array order must stay ascending by pin_number: tmp[i] == pin_number i+1).
-   `side` is chosen schematically (inputs left, outputs+power right) rather
-   than by physical DIP layout - purely a rendering choice, free per IC. */
+/* Real TI SN7408 pinout (Quad 2-Input AND Gate), matching the physical 14-pin
+   DIP: pins 1-7 down the left side, 8-14 back up the right (see
+   component_init_ic) - also drives eval() indexing below (array order must
+   stay ascending by pin_number: tmp[i] == pin_number i+1). */
 static const IC_PinDef k_sn7408_pins[14] = {
-    { 1,  "1A",  PIN_INPUT,  0 },
-    { 2,  "1B",  PIN_INPUT,  0 },
-    { 3,  "1Y",  PIN_OUTPUT, 1 },
-    { 4,  "2A",  PIN_INPUT,  0 },
-    { 5,  "2B",  PIN_INPUT,  0 },
-    { 6,  "2Y",  PIN_OUTPUT, 1 },
-    { 7,  "GND", PIN_POWER,  1 },
-    { 8,  "3Y",  PIN_OUTPUT, 1 },
-    { 9,  "3A",  PIN_INPUT,  0 },
-    { 10, "3B",  PIN_INPUT,  0 },
-    { 11, "4Y",  PIN_OUTPUT, 1 },
-    { 12, "4A",  PIN_INPUT,  0 },
-    { 13, "4B",  PIN_INPUT,  0 },
-    { 14, "VCC", PIN_POWER,  1 },
+    { 1,  "1A",  PIN_INPUT },
+    { 2,  "1B",  PIN_INPUT },
+    { 3,  "1Y",  PIN_OUTPUT },
+    { 4,  "2A",  PIN_INPUT },
+    { 5,  "2B",  PIN_INPUT },
+    { 6,  "2Y",  PIN_OUTPUT },
+    { 7,  "GND", PIN_POWER },
+    { 8,  "3Y",  PIN_OUTPUT },
+    { 9,  "3A",  PIN_INPUT },
+    { 10, "3B",  PIN_INPUT },
+    { 11, "4Y",  PIN_OUTPUT },
+    { 12, "4A",  PIN_INPUT },
+    { 13, "4B",  PIN_INPUT },
+    { 14, "VCC", PIN_POWER },
 };
 
 static SignalValue and2(SignalValue a, SignalValue b) {
@@ -41,8 +41,6 @@ static const IC_Def k_sn7408_def = {
     .name = "SN7408",
     .pin_count = 14,
     .pins = k_sn7408_pins,
-    .width = 5,
-    .height = 10,
     .eval = sn7408_eval,
 };
 
