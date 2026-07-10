@@ -35,4 +35,4 @@ build artifacts.
 - **Escape** — cancel the current action and drop the selection
 
 Tools are also selectable from the taskbar at the top of the window (Select,
-Wire, Input, Output, Place SN7408).
+Wire, Input, Output, Place SN7408, Place SN7432).

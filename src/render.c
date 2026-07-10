@@ -7,6 +7,7 @@
 static const SDL_Color SELECTION_COLOR = { 90, 170, 255, 255 };
 static const SDL_Color LABEL_COLOR = { 225, 225, 230, 255 };
 static const SDL_Color OUTPUT_LABEL_COLOR = { 140, 140, 146, 255 }; /* dimmer, distinguishes Output from Input */
+static const SDL_Color IC_NAME_LABEL_COLOR = { 140, 140, 146, 255 }; /* grayish body-name label shown once pins are too small to read */
 /* every connection point (wire endpoints, IC pin tips, junctions) uses this
    neutral marker color - only the line/stub itself carries the signal color */
 static const SDL_Color CONNECTION_COLOR = { 235, 235, 240, 255 };
@@ -370,6 +371,11 @@ static void render_wire_terminal(SDL_Renderer *renderer, TTF_Font *font_large, c
     text_util_draw_scaled(renderer, font_large, text, bounds.x, bounds.y, label_color, scale);
 }
 
+/* Below this cell size, individual pin labels turn into unreadable clutter
+   - the body switches to one big centered IC name instead (see
+   render_ic_body). Above it, pin names are shown as usual. */
+#define PIN_LABEL_MIN_CELL_PX 9.0f
+
 /* Schematic-symbol style IC: fixed-width rectangle body sized by pin count
    (see ic_dip_body_size), a real-DIP-style pin-1 notch on the top edge, pins
    drawn as short stubs poking out past the edge with a dot at the tip, and
@@ -423,15 +429,32 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     draw_thick_line(renderer, sx + w, sy, sx + w, sy + h, thickness); /* right */
     draw_top_edge_with_notch(renderer, sx, sy, w, cell, thickness);
 
-    if (font_large != NULL && cell >= 6.0f) {
+    if (font_large != NULL && cell >= PIN_LABEL_MIN_CELL_PX) {
         for (int pi = 0; pi < c->pin_count; pi++) {
             const Pin *p = &c->pins[pi];
             int tw, th;
             text_util_measure(font_large, p->name, &tw, &th);
             int stw = (int)lroundf(tw * scale);
             int sth = (int)lroundf(th * scale);
-            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(6 * scale) : edge_sx[pi] - (int)lroundf(6 * scale) - stw;
+            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(10 * scale) : edge_sx[pi] - (int)lroundf(10 * scale) - stw;
             text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, scale);
+        }
+    } else if (font_large != NULL) {
+        /* pins are too small to label individually - show one big name
+           instead, running along the body's long (vertical) axis since the
+           DIP body is always narrow (see ic_dip_body_size). No lower cell
+           bound here - it should keep shrinking along with everything else
+           instead of disappearing once zoomed out past some fixed cutoff. */
+        int tw, th;
+        text_util_measure(font_large, def->name, &tw, &th);
+        if (tw > 0 && th > 0) {
+            float fit_by_length = (h * 0.6f) / tw;    /* text width becomes the vertical extent once rotated */
+            float fit_by_thickness = (w * 0.6f) / th; /* text height becomes the horizontal extent once rotated */
+            float name_scale = fit_by_length < fit_by_thickness ? fit_by_length : fit_by_thickness;
+            if (name_scale > 0.0f) {
+                text_util_draw_scaled_rotated(renderer, font_large, def->name, sx + w / 2, sy + h / 2,
+                                               IC_NAME_LABEL_COLOR, name_scale, -90.0f);
+            }
         }
     }
 }

@@ -60,13 +60,18 @@ float app_wire_hit_tolerance(const App *app) {
     return WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
 }
 
+const char *app_place_tool_ic_name(Tool tool) {
+    if (tool == TOOL_PLACE_SN7408) return "SN7408";
+    if (tool == TOOL_PLACE_SN7432) return "SN7432";
+    return NULL;
+}
+
 void app_get_tool_footprint(Tool tool, int *out_w, int *out_h) {
-    if (tool == TOOL_PLACE_SN7408) {
-        const IC_Def *def = ic_registry_get("SN7408");
-        if (def != NULL) {
-            ic_dip_body_size(def->pin_count, out_w, out_h);
-            return;
-        }
+    const char *ic_name = app_place_tool_ic_name(tool);
+    const IC_Def *def = (ic_name != NULL) ? ic_registry_get(ic_name) : NULL;
+    if (def != NULL) {
+        ic_dip_body_size(def->pin_count, out_w, out_h);
+        return;
     }
     *out_w = 1;
     *out_h = 1;
@@ -142,7 +147,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
                              app->wire_cursor_gx, app->wire_cursor_gy);
     }
 
-    if (app->active_tool == TOOL_PLACE_SN7408) {
+    if (app_place_tool_ic_name(app->active_tool) != NULL) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         if (my >= TASKBAR_HEIGHT) {

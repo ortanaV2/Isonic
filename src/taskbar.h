@@ -12,6 +12,7 @@ typedef enum {
     TOOL_INPUT,
     TOOL_OUTPUT,
     TOOL_PLACE_SN7408,
+    TOOL_PLACE_SN7432,
     TOOL_COUNT
 } Tool;
 

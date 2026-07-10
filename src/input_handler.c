@@ -253,13 +253,14 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return; /* toggling is not selecting - leave whatever was selected before untouched */
     }
 
-    if (app->active_tool == TOOL_PLACE_SN7408) {
+    const char *place_ic_name = app_place_tool_ic_name(app->active_tool);
+    if (place_ic_name != NULL) {
         int w, h;
         app_get_tool_footprint(app->active_tool, &w, &h);
         if (circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
             return; /* overlapping placement rejected, stay in the tool */
         }
-        const IC_Def *def = ic_registry_get("SN7408");
+        const IC_Def *def = ic_registry_get(place_ic_name);
         int new_id = (def != NULL) ? circuit_add_ic(&app->circuit, gx, gy, def) : -1;
         app->active_tool = TOOL_SELECT;
         if (new_id >= 0) select_component(app, new_id);

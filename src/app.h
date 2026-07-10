@@ -81,9 +81,13 @@ void app_update(App *app);
    into an offscreen texture first for supersampled anti-aliasing. */
 void app_render(App *app, SDL_Renderer *renderer);
 
-/* Footprint (grid cells) of the IC the given tool would place; only meaningful
-   for TOOL_PLACE_SN7408 (the only remaining click-to-place tool - Input/Output
-   are drag-drawn wires now, see WireKind in circuit.h). */
+/* IC registry name a TOOL_PLACE_* tool places (e.g. "SN7408"), or NULL for
+   any other tool. Add one line here for each new placeable IC. */
+const char *app_place_tool_ic_name(Tool tool);
+
+/* Footprint (grid cells) of the IC the given tool would place; (1, 1) for any
+   tool that isn't a TOOL_PLACE_* one - Input/Output are drag-drawn wires, not
+   click-to-place, see WireKind in circuit.h. */
 void app_get_tool_footprint(Tool tool, int *out_w, int *out_h);
 
 /* WIRE_HIT_TOLERANCE_PX converted to grid units at the current zoom - the

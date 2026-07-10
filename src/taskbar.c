@@ -7,6 +7,7 @@ static const char *k_labels[TOOL_COUNT] = {
     "Input",
     "Output",
     "Place SN7408",
+    "Place SN7432",
 };
 
 #define BUTTON_PADDING_X 14

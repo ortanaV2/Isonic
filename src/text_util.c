@@ -37,6 +37,23 @@ void text_util_draw_scaled(SDL_Renderer *renderer, TTF_Font *font, const char *t
     SDL_FreeSurface(surface);
 }
 
+void text_util_draw_scaled_rotated(SDL_Renderer *renderer, TTF_Font *font, const char *text,
+                                    int center_x, int center_y, SDL_Color color, float scale, float angle_deg) {
+    if (font == NULL || text == NULL || text[0] == '\0') return;
+    SDL_Surface *surface = TTF_RenderUTF8_Blended(font, text, color);
+    if (surface == NULL) return;
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (texture != NULL) {
+        int w = (int)lroundf(surface->w * scale);
+        int h = (int)lroundf(surface->h * scale);
+        SDL_Rect dst = { center_x - w / 2, center_y - h / 2, w, h };
+        SDL_Point center = { w / 2, h / 2 };
+        SDL_RenderCopyEx(renderer, texture, NULL, &dst, angle_deg, &center, SDL_FLIP_NONE);
+        SDL_DestroyTexture(texture);
+    }
+    SDL_FreeSurface(surface);
+}
+
 void text_util_measure(TTF_Font *font, const char *text, int *out_w, int *out_h) {
     if (font == NULL || text == NULL) {
         *out_w = 0;

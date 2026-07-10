@@ -4,6 +4,7 @@
 #include "app.h"
 #include "ic_registry.h"
 #include "ics/sn7408.h"
+#include "ics/sn7432.h"
 
 #define WINDOW_W 1280
 #define WINDOW_H 800
@@ -58,6 +59,7 @@ int main(int argc, char **argv) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     ic_sn7408_register();
+    ic_sn7432_register();
 
     App app;
     app_init(&app, WINDOW_W, WINDOW_H);
