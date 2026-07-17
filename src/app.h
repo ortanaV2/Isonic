@@ -61,6 +61,17 @@ typedef struct {
     /* panning the camera with the middle mouse button */
     int panning;
 
+    /* rubber-band multi-select: a Select-mode left-drag started over empty
+       space (no node/component/wire under the cursor) draws a box, and on
+       release every component/wire fully enclosed by it - not merely touched
+       - gets marked .selected, same as Windows Explorer. Screen pixels, not
+       grid coords: the box is a pure screen-space overlay, so it's simplest
+       to keep it in the same space it's drawn in and only convert to grid
+       space once, at release, for the containment test. */
+    int marquee_active;
+    int marquee_start_mx, marquee_start_my;
+    int marquee_cur_mx, marquee_cur_my;
+
     /* dragging out a new wire between two arbitrary grid points - kind tags it
        as a plain wire or an Input/Output terminal (see WireKind in circuit.h) */
     int wiring;

@@ -216,12 +216,19 @@ void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int wi
 }
 
 void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int fy, int tx, int ty) {
+    /* still exactly on the start point - no length yet, so there is nothing
+       to preview. Without this, a click that hasn't moved yet (or a drag
+       that rounds back to the same grid point) would still show two
+       overlapping dots, which reads as a wire having been placed at a single
+       point even though circuit_add_wire (rightly) refuses to create one. */
+    if (fx == tx && fy == ty) return;
+
     int sfx, sfy, stx, sty;
     camera_grid_to_screen(cam, fx, fy, &sfx, &sfy);
     camera_grid_to_screen(cam, tx, ty, &stx, &sty);
 
     float cell = camera_cell_px(cam);
-    SDL_SetRenderDrawColor(renderer, 200, 200, 210, 255);
+    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
     draw_thick_line(renderer, sfx, sfy, stx, sty, wire_thickness_px(cell));
 
     float r = connection_dot_radius_px(cell);
@@ -242,6 +249,17 @@ void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx,
     }
     SDL_RenderFillRect(renderer, &r);
     SDL_SetRenderDrawColor(renderer, 230, 230, 235, 180);
+    SDL_RenderDrawRect(renderer, &r);
+}
+
+void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y1) {
+    SDL_Rect r = {
+        x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1,
+        (x0 < x1 ? x1 - x0 : x0 - x1), (y0 < y1 ? y1 - y0 : y0 - y1),
+    };
+    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 45);
+    SDL_RenderFillRect(renderer, &r);
+    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 200);
     SDL_RenderDrawRect(renderer, &r);
 }
 

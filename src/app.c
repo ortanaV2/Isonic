@@ -32,6 +32,12 @@ void app_init(App *app, int window_w, int window_h) {
 
     app->panning = 0;
 
+    app->marquee_active = 0;
+    app->marquee_start_mx = 0;
+    app->marquee_start_my = 0;
+    app->marquee_cur_mx = 0;
+    app->marquee_cur_my = 0;
+
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
     app->wire_from_gx = 0;
@@ -130,7 +136,10 @@ void app_render(App *app, SDL_Renderer *renderer) {
     if (app->wiring) {
         find_snap_target_at(app, app->wire_from_gx, app->wire_from_gy, &snap_component_a, &snap_wire_a);
         find_snap_target_at(app, app->wire_cursor_gx, app->wire_cursor_gy, &snap_component_b, &snap_wire_b);
-    } else if (app->drag_kind == DRAG_NONE) {
+    } else if (app->drag_kind == DRAG_NONE && !app->marquee_active) {
+        /* suppressed during a marquee drag - the box itself is the thing the
+           user is focused on, and a hover highlight flickering underneath it
+           as the cursor crosses components would just be confusing noise */
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         if (my >= TASKBAR_HEIGHT) {
@@ -157,6 +166,11 @@ void app_render(App *app, SDL_Renderer *renderer) {
             int valid = !circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1);
             render_placement_preview(renderer, &app->camera, gx, gy, w, h, valid);
         }
+    }
+
+    if (app->marquee_active) {
+        render_marquee_select(renderer, app->marquee_start_mx, app->marquee_start_my,
+                               app->marquee_cur_mx, app->marquee_cur_my);
     }
 
     taskbar_render(renderer, app->font, &app->taskbar, app->active_tool);

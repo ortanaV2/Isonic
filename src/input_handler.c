@@ -1,12 +1,16 @@
 #include "app.h"
 #include "render.h"
 
+/* Clears every .selected flag in the circuit, not just the tracked single
+   ids - a marquee selection (see finish_marquee_select) can mark several
+   components/wires at once without ever touching selected_component_id/
+   selected_wire_id, so those alone aren't enough to undo it. */
 static void clear_selection(App *app) {
-    if (app->selected_component_id >= 0) {
-        app->circuit.components[app->selected_component_id].selected = 0;
+    for (int i = 0; i < app->circuit.component_high_water; i++) {
+        app->circuit.components[i].selected = 0;
     }
-    if (app->selected_wire_id >= 0) {
-        app->circuit.wires[app->selected_wire_id].selected = 0;
+    for (int i = 0; i < app->circuit.wire_high_water; i++) {
+        app->circuit.wires[i].selected = 0;
     }
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
@@ -24,14 +28,21 @@ static void select_wire(App *app, int id) {
     app->circuit.wires[id].selected = 1;
 }
 
+/* Removes every selected component/wire, not just the single tracked ids -
+   a marquee selection can mark several at once (see clear_selection above). */
 static void delete_selection(App *app) {
-    if (app->selected_component_id >= 0) {
-        circuit_remove_component(&app->circuit, app->selected_component_id);
-        app->selected_component_id = -1;
-    } else if (app->selected_wire_id >= 0) {
-        circuit_remove_wire(&app->circuit, app->selected_wire_id);
-        app->selected_wire_id = -1;
+    for (int i = 0; i < app->circuit.component_high_water; i++) {
+        if (app->circuit.components[i].in_use && app->circuit.components[i].selected) {
+            circuit_remove_component(&app->circuit, i);
+        }
     }
+    for (int i = 0; i < app->circuit.wire_high_water; i++) {
+        if (app->circuit.wires[i].in_use && app->circuit.wires[i].selected) {
+            circuit_remove_wire(&app->circuit, i);
+        }
+    }
+    app->selected_component_id = -1;
+    app->selected_wire_id = -1;
 }
 
 /* Unmarks the wires temporarily highlighted for a DRAG_WIRE_NODE (see
@@ -51,6 +62,7 @@ static void cancel_transient_actions(App *app) {
     app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
     app->panning = 0;
+    app->marquee_active = 0;
     app->active_tool = TOOL_SELECT;
 }
 
@@ -204,6 +216,64 @@ static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int g
     }
 }
 
+static void begin_marquee_select(App *app, int mx, int my) {
+    clear_selection(app);
+    app->marquee_active = 1;
+    app->marquee_start_mx = app->marquee_cur_mx = mx;
+    app->marquee_start_my = app->marquee_cur_my = my;
+}
+
+/* Recomputes which components/wires are enclosed by the current marquee box
+   and marks them .selected - called on every mouse-move during a marquee
+   drag (see app_handle_event) so the selection previews live as the box
+   grows/shrinks, instead of only appearing once the button is released.
+   Fully enclosed only ("erst markiert, wenn vollständig markiert"), not
+   merely touched - a box that only grazes a component's edge doesn't grab
+   it. A wire counts as enclosed when both its endpoints are inside the box
+   (it has no interior area of its own to test). Recomputed from scratch
+   every call (clearing first) rather than incrementally, so shrinking the
+   box correctly drops things it no longer covers. */
+static void update_marquee_selection(App *app) {
+    Circuit *circuit = &app->circuit;
+    for (int i = 0; i < circuit->component_high_water; i++) circuit->components[i].selected = 0;
+    for (int i = 0; i < circuit->wire_high_water; i++) circuit->wires[i].selected = 0;
+
+    if (app->marquee_start_mx == app->marquee_cur_mx && app->marquee_start_my == app->marquee_cur_my) return;
+
+    float gx0, gy0, gx1, gy1;
+    camera_screen_to_grid_f(&app->camera, app->marquee_start_mx, app->marquee_start_my, &gx0, &gy0);
+    camera_screen_to_grid_f(&app->camera, app->marquee_cur_mx, app->marquee_cur_my, &gx1, &gy1);
+    float min_x = gx0 < gx1 ? gx0 : gx1, max_x = gx0 > gx1 ? gx0 : gx1;
+    float min_y = gy0 < gy1 ? gy0 : gy1, max_y = gy0 > gy1 ? gy0 : gy1;
+
+    for (int i = 0; i < circuit->component_high_water; i++) {
+        Component *c = &circuit->components[i];
+        if (!c->in_use) continue;
+        int w, h;
+        component_get_size(c, &w, &h);
+        if (c->grid_x >= min_x && c->grid_x + w <= max_x && c->grid_y >= min_y && c->grid_y + h <= max_y) {
+            c->selected = 1;
+        }
+    }
+    for (int i = 0; i < circuit->wire_high_water; i++) {
+        Wire *w = &circuit->wires[i];
+        if (!w->in_use) continue;
+        if (w->from_x >= min_x && w->from_x <= max_x && w->from_y >= min_y && w->from_y <= max_y &&
+            w->to_x >= min_x && w->to_x <= max_x && w->to_y >= min_y && w->to_y <= max_y) {
+            w->selected = 1;
+        }
+    }
+}
+
+/* Button-up just ends the drag - the selection itself has already been kept
+   live-updated by update_marquee_selection on every move (see above), so
+   there's nothing left to compute here except one last catch-up call in case
+   the final position never got a motion event of its own. */
+static void finish_marquee_select(App *app) {
+    app->marquee_active = 0;
+    update_marquee_selection(app);
+}
+
 static WireKind tool_to_wire_kind(Tool tool) {
     if (tool == TOOL_INPUT) return WIRE_KIND_INPUT;
     if (tool == TOOL_OUTPUT) return WIRE_KIND_OUTPUT;
@@ -301,7 +371,10 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return;
     }
 
-    clear_selection(app);
+    /* nothing under the cursor - start a rubber-band selection box instead of
+       just clearing the selection outright (a plain click with no drag still
+       ends up clearing it, see finish_marquee_select) */
+    begin_marquee_select(app, mx, my);
 }
 
 static void finish_wire(App *app, int gx, int gy) {
@@ -373,6 +446,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (app->wiring) finish_wire(app, gx, gy);
                 else if (app->drag_kind != DRAG_NONE) finish_drag(app);
+                else if (app->marquee_active) finish_marquee_select(app);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 0;
             }
@@ -386,6 +460,11 @@ void app_handle_event(App *app, const SDL_Event *event) {
             if (app->wiring) {
                 camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y,
                                        &app->wire_cursor_gx, &app->wire_cursor_gy);
+            }
+            if (app->marquee_active) {
+                app->marquee_cur_mx = event->motion.x;
+                app->marquee_cur_my = event->motion.y;
+                update_marquee_selection(app);
             }
             if (app->drag_kind != DRAG_NONE) {
                 int gx, gy;

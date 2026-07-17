@@ -26,6 +26,10 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
 /* Ghost footprint shown while a placement tool is active, following the cursor. */
 void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx, int gy, int w, int h, int valid);
 
+/* Rubber-band selection box, shown while a Select-mode marquee drag is in
+   progress (see app->marquee_active). Screen-space corners, any order. */
+void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y1);
+
 /* Screen-space bounding box of an INPUT/OUTPUT wire's H/L label, shared by
    rendering and click hit-testing so the clickable area always exactly
    matches what's drawn. Returns 0 (rect left unset) for WIRE_KIND_NORMAL, if
