@@ -72,6 +72,16 @@ typedef struct {
     int marquee_start_mx, marquee_start_my;
     int marquee_cur_mx, marquee_cur_my;
 
+    /* Ctrl+C copy: copies the single selected component and immediately
+       starts a placement-at-cursor preview for it, same click-to-place
+       interaction as the taskbar's Place tools (see
+       app_place_tool_ic_name) but not tied to a taskbar slot. clipboard_ic_def
+       is left set after pasting ends (harmless - it just points at static
+       IC_Def data owned by the registry); pasting is what actually gates the
+       preview/placement behavior. */
+    const IC_Def *clipboard_ic_def;
+    int pasting;
+
     /* dragging out a new wire between two arbitrary grid points - kind tags it
        as a plain wire or an Input/Output terminal (see WireKind in circuit.h) */
     int wiring;

@@ -63,7 +63,46 @@ static void cancel_transient_actions(App *app) {
     app->drag_attach_count = 0;
     app->panning = 0;
     app->marquee_active = 0;
+    app->pasting = 0;
     app->active_tool = TOOL_SELECT;
+}
+
+/* Ctrl+C - copies a component and immediately starts a placement-at-cursor
+   preview for it, same click-to-place interaction as the taskbar's Place
+   tools but without a taskbar slot. Which component: whatever is directly
+   under the cursor right now, even if nothing is selected - hovering alone
+   is enough. Only if the cursor isn't over anything does it fall back to the
+   current selection, and only if that selection is exactly one component -
+   "eine markierte Komponente" is singular for a reason: which one would
+   ambiguous multi-selection copy? Wires aren't copyable this way. */
+static void copy_selected_component(App *app) {
+    const Component *found = NULL;
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    if (my >= TASKBAR_HEIGHT) {
+        int box_gx, box_gy;
+        camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+        int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
+        if (comp_id >= 0) found = &app->circuit.components[comp_id];
+    }
+
+    if (found == NULL) {
+        int ambiguous = 0;
+        for (int i = 0; i < app->circuit.component_high_water; i++) {
+            Component *c = &app->circuit.components[i];
+            if (c->in_use && c->selected) {
+                if (found != NULL) { ambiguous = 1; break; }
+                found = c;
+            }
+        }
+        if (ambiguous) found = NULL;
+    }
+    if (found == NULL) return;
+
+    cancel_transient_actions(app); /* clean slate - drop any wiring/drag/marquee in progress first */
+    app->clipboard_ic_def = found->ic_def;
+    app->pasting = 1;
 }
 
 static void set_active_tool(App *app, Tool tool) {
@@ -323,6 +362,16 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return; /* toggling is not selecting - leave whatever was selected before untouched */
     }
 
+    if (app->pasting && app->clipboard_ic_def != NULL) {
+        int w, h;
+        ic_dip_body_size(app->clipboard_ic_def->pin_count, &w, &h);
+        if (!circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
+            int new_id = circuit_add_ic(&app->circuit, gx, gy, app->clipboard_ic_def);
+            if (new_id >= 0) select_component(app, new_id);
+        }
+        return; /* stays in paste mode either way - stamp down as many copies as wanted */
+    }
+
     const char *place_ic_name = app_place_tool_ic_name(app->active_tool);
     if (place_ic_name != NULL) {
         int w, h;
@@ -332,7 +381,9 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         }
         const IC_Def *def = ic_registry_get(place_ic_name);
         int new_id = (def != NULL) ? circuit_add_ic(&app->circuit, gx, gy, def) : -1;
-        app->active_tool = TOOL_SELECT;
+        /* stays on the placement tool after placing, same as Wire/Input/Output -
+           lets you drop several of the same IC in a row without reselecting it
+           from the taskbar every time */
         if (new_id >= 0) select_component(app, new_id);
         return;
     }
@@ -516,6 +567,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 set_active_tool(app, TOOL_WIRE);
             } else if (sc == SDL_SCANCODE_SPACE) {
                 set_active_tool(app, TOOL_SELECT);
+            } else if (sc == SDL_SCANCODE_C && (event->key.keysym.mod & KMOD_CTRL)) {
+                copy_selected_component(app);
             }
             break;
         }

@@ -33,6 +33,7 @@ build artifacts.
 - **Space** — switch to Select mode
 - **Delete / Backspace** — delete the current selection
 - **Escape** — cancel the current action and drop the selection
+- **Ctrl+C** — copy the selected component and start placing copies at the cursor
 
 Tools are also selectable from the taskbar at the top of the window (Select,
 Wire, Input, Output, Place SN7408, Place SN7432).

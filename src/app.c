@@ -38,6 +38,9 @@ void app_init(App *app, int window_w, int window_h) {
     app->marquee_cur_mx = 0;
     app->marquee_cur_my = 0;
 
+    app->clipboard_ic_def = NULL;
+    app->pasting = 0;
+
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
     app->wire_from_gx = 0;
@@ -121,6 +124,16 @@ static void find_hover_target_at(App *app, int mx, int my, int *out_component_id
     if (wid >= 0) *out_wire_id = wid;
 }
 
+/* The IC that would be placed by a click right now - either from an active
+   TOOL_PLACE_* taskbar tool, or from an in-progress Ctrl+C paste (see
+   app->pasting in input_handler.c) - or NULL if neither applies. Centralizes
+   which source wins so the placement preview below doesn't care which one it is. */
+static const IC_Def *pending_placement_ic(const App *app) {
+    if (app->pasting && app->clipboard_ic_def != NULL) return app->clipboard_ic_def;
+    const char *ic_name = app_place_tool_ic_name(app->active_tool);
+    return (ic_name != NULL) ? ic_registry_get(ic_name) : NULL;
+}
+
 void app_render(App *app, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
     SDL_RenderClear(renderer);
@@ -156,13 +169,14 @@ void app_render(App *app, SDL_Renderer *renderer) {
                              app->wire_cursor_gx, app->wire_cursor_gy);
     }
 
-    if (app_place_tool_ic_name(app->active_tool) != NULL) {
+    const IC_Def *pending_ic = pending_placement_ic(app);
+    if (pending_ic != NULL) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
         if (my >= TASKBAR_HEIGHT) {
             int gx, gy, w, h;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
-            app_get_tool_footprint(app->active_tool, &w, &h);
+            ic_dip_body_size(pending_ic->pin_count, &w, &h);
             int valid = !circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1);
             render_placement_preview(renderer, &app->camera, gx, gy, w, h, valid);
         }
