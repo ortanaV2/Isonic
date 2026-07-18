@@ -14,7 +14,7 @@ typedef struct {
 } IC_PinDef;
 
 typedef struct IC_Def {
-    const char *name;             /* unique registry key, e.g. "SN7408" */
+    const char *name;             /* unique registry key, e.g. "SN74HC08N" */
     int pin_count;
     const IC_PinDef *pins;        /* static array, length == pin_count, ordered by pin_number ascending starting at 1 */
     /* in-place eval: reads PIN_INPUT values, writes PIN_OUTPUT values.

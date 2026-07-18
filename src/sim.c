@@ -50,6 +50,7 @@ static void gather_drivers(Circuit *circuit) {
         for (int pi = 0; pi < c->pin_count; pi++) {
             Pin *p = &c->pins[pi];
             if (p->direction != PIN_OUTPUT) continue;
+            if (p->value == SIG_HIZ) continue; /* tri-stated - not driving its net right now */
             register_driver(pin_root_cache[GLOBAL_PIN_ID(ci, pi)], p->value);
         }
     }

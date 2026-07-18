@@ -1,11 +1,11 @@
-#include "sn7408.h"
+#include "sn74hc08.h"
 #include "../ic_registry.h"
 
-/* Real TI SN7408 pinout (Quad 2-Input AND Gate), matching the physical 14-pin
-   DIP: pins 1-7 down the left side, 8-14 back up the right (see
+/* Real TI SN74HC08N pinout (Quad 2-Input AND Gate), matching the physical
+   14-pin DIP: pins 1-7 down the left side, 8-14 back up the right (see
    component_init_ic) - also drives eval() indexing below (array order must
    stay ascending by pin_number: tmp[i] == pin_number i+1). */
-static const IC_PinDef k_sn7408_pins[14] = {
+static const IC_PinDef k_sn74hc08_pins[14] = {
     { 1,  "1A",  PIN_INPUT },
     { 2,  "1B",  PIN_INPUT },
     { 3,  "1Y",  PIN_OUTPUT },
@@ -29,7 +29,7 @@ static SignalValue and2(SignalValue a, SignalValue b) {
     return SIG_HIGH;
 }
 
-static void sn7408_eval(SignalValue *v, int pin_count) {
+static void sn74hc08_eval(SignalValue *v, int pin_count) {
     (void)pin_count; /* always 14 for this IC */
     v[2]  = and2(v[0], v[1]);   /* 1Y = 1A & 1B  */
     v[5]  = and2(v[3], v[4]);   /* 2Y = 2A & 2B  */
@@ -37,13 +37,13 @@ static void sn7408_eval(SignalValue *v, int pin_count) {
     v[10] = and2(v[11], v[12]); /* 4Y = 4A & 4B  */
 }
 
-static const IC_Def k_sn7408_def = {
-    .name = "SN7408",
+static const IC_Def k_sn74hc08_def = {
+    .name = "SN74HC08N",
     .pin_count = 14,
-    .pins = k_sn7408_pins,
-    .eval = sn7408_eval,
+    .pins = k_sn74hc08_pins,
+    .eval = sn74hc08_eval,
 };
 
-void ic_sn7408_register(void) {
-    ic_registry_register(&k_sn7408_def);
+void ic_sn74hc08_register(void) {
+    ic_registry_register(&k_sn74hc08_def);
 }

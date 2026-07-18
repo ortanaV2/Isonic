@@ -16,6 +16,7 @@ void app_init(App *app, int window_w, int window_h) {
     app->font_large = text_util_load_font(48);
 
     app->active_tool = TOOL_SELECT;
+    app->place_ic_name = NULL;
     app->window_w = window_w;
     app->window_h = window_h;
     app->running = 1;
@@ -69,21 +70,12 @@ float app_wire_hit_tolerance(const App *app) {
     return WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
 }
 
-const char *app_place_tool_ic_name(Tool tool) {
-    if (tool == TOOL_PLACE_SN7408) return "SN7408";
-    if (tool == TOOL_PLACE_SN7432) return "SN7432";
-    return NULL;
-}
-
-void app_get_tool_footprint(Tool tool, int *out_w, int *out_h) {
-    const char *ic_name = app_place_tool_ic_name(tool);
-    const IC_Def *def = (ic_name != NULL) ? ic_registry_get(ic_name) : NULL;
-    if (def != NULL) {
-        ic_dip_body_size(def->pin_count, out_w, out_h);
-        return;
+const IC_Def *app_pending_place_ic(const App *app) {
+    if (app->pasting && app->clipboard_ic_def != NULL) return app->clipboard_ic_def;
+    if (app->active_tool == TOOL_PLACE_IC && app->place_ic_name != NULL) {
+        return ic_registry_get(app->place_ic_name);
     }
-    *out_w = 1;
-    *out_h = 1;
+    return NULL;
 }
 
 /* Whatever sits exactly at (gx, gy) - a pin (-> its IC) or an existing wire -
@@ -124,16 +116,6 @@ static void find_hover_target_at(App *app, int mx, int my, int *out_component_id
     if (wid >= 0) *out_wire_id = wid;
 }
 
-/* The IC that would be placed by a click right now - either from an active
-   TOOL_PLACE_* taskbar tool, or from an in-progress Ctrl+C paste (see
-   app->pasting in input_handler.c) - or NULL if neither applies. Centralizes
-   which source wins so the placement preview below doesn't care which one it is. */
-static const IC_Def *pending_placement_ic(const App *app) {
-    if (app->pasting && app->clipboard_ic_def != NULL) return app->clipboard_ic_def;
-    const char *ic_name = app_place_tool_ic_name(app->active_tool);
-    return (ic_name != NULL) ? ic_registry_get(ic_name) : NULL;
-}
-
 void app_render(App *app, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
     SDL_RenderClear(renderer);
@@ -169,11 +151,15 @@ void app_render(App *app, SDL_Renderer *renderer) {
                              app->wire_cursor_gx, app->wire_cursor_gy);
     }
 
-    const IC_Def *pending_ic = pending_placement_ic(app);
+    const IC_Def *pending_ic = app_pending_place_ic(app);
     if (pending_ic != NULL) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
-        if (my >= TASKBAR_HEIGHT) {
+        /* suppressed while the cursor is over the taskbar strip or (if open)
+           the Components dropdown - seeing the placement ghost peek out from
+           behind the menu looks like hovering a menu row might place a part,
+           which it doesn't (see taskbar_covers_point) */
+        if (!taskbar_covers_point(&app->taskbar, mx, my)) {
             int gx, gy, w, h;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
@@ -187,5 +173,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
                                app->marquee_cur_mx, app->marquee_cur_my);
     }
 
-    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool);
+    int hover_mx, hover_my;
+    SDL_GetMouseState(&hover_mx, &hover_my);
+    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, app->place_ic_name, hover_mx, hover_my);
 }

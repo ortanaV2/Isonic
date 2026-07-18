@@ -28,6 +28,11 @@ typedef struct {
     TTF_Font *font_large; /* all component/wire labels, loaded oversized and scaled down for crisp zoom */
 
     Tool active_tool;
+    /* which IC TOOL_PLACE_IC would place, chosen from the taskbar's
+       Components dropdown - NULL until something's been picked. Points at a
+       static string literal owned by taskbar.c's menu catalog, so no
+       lifetime/ownership concerns. */
+    const char *place_ic_name;
 
     int window_w, window_h;
     int running;
@@ -72,13 +77,13 @@ typedef struct {
     int marquee_start_mx, marquee_start_my;
     int marquee_cur_mx, marquee_cur_my;
 
-    /* Ctrl+C copy: copies the single selected component and immediately
-       starts a placement-at-cursor preview for it, same click-to-place
-       interaction as the taskbar's Place tools (see
-       app_place_tool_ic_name) but not tied to a taskbar slot. clipboard_ic_def
-       is left set after pasting ends (harmless - it just points at static
-       IC_Def data owned by the registry); pasting is what actually gates the
-       preview/placement behavior. */
+    /* Ctrl+C copy: copies a component and immediately starts a
+       placement-at-cursor preview for it, same click-to-place interaction as
+       choosing an IC from the Components dropdown (see app_pending_place_ic)
+       but not tied to a menu selection. clipboard_ic_def is left set after
+       pasting ends (harmless - it just points at static IC_Def data owned by
+       the registry); pasting is what actually gates the preview/placement
+       behavior. */
     const IC_Def *clipboard_ic_def;
     int pasting;
 
@@ -102,14 +107,12 @@ void app_update(App *app);
    into an offscreen texture first for supersampled anti-aliasing. */
 void app_render(App *app, SDL_Renderer *renderer);
 
-/* IC registry name a TOOL_PLACE_* tool places (e.g. "SN7408"), or NULL for
-   any other tool. Add one line here for each new placeable IC. */
-const char *app_place_tool_ic_name(Tool tool);
-
-/* Footprint (grid cells) of the IC the given tool would place; (1, 1) for any
-   tool that isn't a TOOL_PLACE_* one - Input/Output are drag-drawn wires, not
-   click-to-place, see WireKind in circuit.h. */
-void app_get_tool_footprint(Tool tool, int *out_w, int *out_h);
+/* The IC that would be placed by a click right now - either the one chosen
+   from the taskbar's Components dropdown (TOOL_PLACE_IC, see place_ic_name
+   above) or an in-progress Ctrl+C paste (see pasting above) - or NULL if
+   neither applies. Centralizes which source wins so preview/footprint/
+   placement code never needs to care which one it is. */
+const IC_Def *app_pending_place_ic(const App *app);
 
 /* WIRE_HIT_TOLERANCE_PX converted to grid units at the current zoom - the
    tolerance every wire/pin proximity hit-test in input_handler.c and app.c uses. */

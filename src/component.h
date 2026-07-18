@@ -5,7 +5,11 @@
 
 typedef struct IC_Def IC_Def; /* forward declaration, defined in ic_registry.h */
 
-#define MAX_PINS_PER_COMPONENT 16
+/* 20 to fit the widest DIP package currently modeled (SN74HC244N/TC74HC373APF,
+   20-pin octal chips) - every array/loop bound elsewhere derives from this
+   macro rather than hardcoding a pin count, so raising it is sufficient on
+   its own. */
+#define MAX_PINS_PER_COMPONENT 20
 
 /* Input/Output are no longer components - they're just wires with a WIRE_KIND_INPUT/
    OUTPUT tag (see circuit.h) so they can be drawn/dragged exactly like any wire. */

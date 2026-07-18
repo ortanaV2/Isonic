@@ -36,4 +36,13 @@ build artifacts.
 - **Ctrl+C** — copy the selected component and start placing copies at the cursor
 
 Tools are also selectable from the taskbar at the top of the window (Select,
-Wire, Input, Output, Place SN7408, Place SN7432).
+Wire, Input, Output). The **Components** button opens a categorized,
+fold-up parts menu — click a category to expand it, then click a part to
+start placing it:
+
+- **Logic Gates** — AND (SN74HC08N), OR (SN74HC32N), NOT (CD74HC04E),
+  NAND (SN74HC00N), NOR (SN74HC02N), XOR (SN74HC86N)
+- **Multiplexers** — 8:1 MUX (SN74HC151N), Dual 4:1 MUX (SN74HC153N)
+- **Demultiplexers** — 1:8 DEMUX (CD74HCT238E), Dual 1:4 DEMUX (CD4555BE)
+- **Buffers** — Tri-State Buffer (SN74HC244N)
+- **Latches** — D-Latch (TC74HC373APF)

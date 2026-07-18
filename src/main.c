@@ -3,8 +3,18 @@
 #include <SDL2/SDL_ttf.h>
 #include "app.h"
 #include "ic_registry.h"
-#include "ics/sn7408.h"
-#include "ics/sn7432.h"
+#include "ics/cd4555.h"
+#include "ics/cd74hc04.h"
+#include "ics/cd74hct238.h"
+#include "ics/sn74hc00.h"
+#include "ics/sn74hc02.h"
+#include "ics/sn74hc08.h"
+#include "ics/sn74hc32.h"
+#include "ics/sn74hc86.h"
+#include "ics/sn74hc151.h"
+#include "ics/sn74hc153.h"
+#include "ics/sn74hc244.h"
+#include "ics/tc74hc373.h"
 
 #define WINDOW_W 1280
 #define WINDOW_H 800
@@ -58,8 +68,18 @@ int main(int argc, char **argv) {
     }
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    ic_sn7408_register();
-    ic_sn7432_register();
+    ic_cd4555_register();
+    ic_cd74hc04_register();
+    ic_cd74hct238_register();
+    ic_sn74hc00_register();
+    ic_sn74hc02_register();
+    ic_sn74hc08_register();
+    ic_sn74hc32_register();
+    ic_sn74hc86_register();
+    ic_sn74hc151_register();
+    ic_sn74hc153_register();
+    ic_sn74hc244_register();
+    ic_tc74hc373_register();
 
     App app;
     app_init(&app, WINDOW_W, WINDOW_H);

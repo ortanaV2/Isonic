@@ -64,6 +64,7 @@ static void cancel_transient_actions(App *app) {
     app->panning = 0;
     app->marquee_active = 0;
     app->pasting = 0;
+    app->taskbar.menu_open = 0;
     app->active_tool = TOOL_SELECT;
 }
 
@@ -111,11 +112,25 @@ static void set_active_tool(App *app, Tool tool) {
     app->active_tool = tool;
 }
 
-static void handle_taskbar_click(App *app, int mx, int my) {
-    int tool = taskbar_hit_test(&app->taskbar, mx, my);
-    if (tool >= 0) {
-        set_active_tool(app, (Tool)tool);
+/* Returns 1 if the click was fully handled by the taskbar/dropdown (a tool
+   or IC was chosen, or it just hit chrome like a category fold arrow), 0 if
+   it missed everything and the caller should treat it as an ordinary canvas
+   click instead (see taskbar_handle_click's comment on why a miss can still
+   have closed an open dropdown as a side effect). */
+static int handle_taskbar_click(App *app, int mx, int my) {
+    Tool tool;
+    const char *ic_name;
+    TaskbarClickKind kind = taskbar_handle_click(&app->taskbar, mx, my, &tool, &ic_name);
+    if (kind == TASKBAR_CLICK_TOOL) {
+        set_active_tool(app, tool);
+        return 1;
     }
+    if (kind == TASKBAR_CLICK_IC) {
+        set_active_tool(app, TOOL_PLACE_IC);
+        app->place_ic_name = ic_name;
+        return 1;
+    }
+    return kind == TASKBAR_CLICK_CONSUMED;
 }
 
 static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
@@ -362,29 +377,19 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return; /* toggling is not selecting - leave whatever was selected before untouched */
     }
 
-    if (app->pasting && app->clipboard_ic_def != NULL) {
+    /* covers both an IC chosen from the Components menu (TOOL_PLACE_IC) and
+       an in-progress Ctrl+C paste - app_pending_place_ic resolves which one
+       wins (see its comment in app.h). Either way, stays in the current mode
+       after placing (like Wire/Input/Output do) so several copies can be
+       dropped in a row without reselecting the IC each time. */
+    const IC_Def *place_def = app_pending_place_ic(app);
+    if (place_def != NULL) {
         int w, h;
-        ic_dip_body_size(app->clipboard_ic_def->pin_count, &w, &h);
+        ic_dip_body_size(place_def->pin_count, &w, &h);
         if (!circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
-            int new_id = circuit_add_ic(&app->circuit, gx, gy, app->clipboard_ic_def);
+            int new_id = circuit_add_ic(&app->circuit, gx, gy, place_def);
             if (new_id >= 0) select_component(app, new_id);
         }
-        return; /* stays in paste mode either way - stamp down as many copies as wanted */
-    }
-
-    const char *place_ic_name = app_place_tool_ic_name(app->active_tool);
-    if (place_ic_name != NULL) {
-        int w, h;
-        app_get_tool_footprint(app->active_tool, &w, &h);
-        if (circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
-            return; /* overlapping placement rejected, stay in the tool */
-        }
-        const IC_Def *def = ic_registry_get(place_ic_name);
-        int new_id = (def != NULL) ? circuit_add_ic(&app->circuit, gx, gy, def) : -1;
-        /* stays on the placement tool after placing, same as Wire/Input/Output -
-           lets you drop several of the same IC in a row without reselecting it
-           from the taskbar every time */
-        if (new_id >= 0) select_component(app, new_id);
         return;
     }
 
@@ -470,12 +475,19 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_MOUSEBUTTONDOWN: {
             int mx = event->button.x, my = event->button.y;
-            if (my < TASKBAR_HEIGHT) {
-                if (event->button.button == SDL_BUTTON_LEFT) {
-                    handle_taskbar_click(app, mx, my);
-                }
+            /* the Components dropdown can extend below TASKBAR_HEIGHT while
+               open, so a plain y-cutoff isn't enough to gate taskbar clicks
+               anymore - left clicks always go through the taskbar first
+               (which knows its own bounds, including the dropdown, and
+               reports back a miss so the click can fall through to the
+               canvas); other buttons are just swallowed if they land on
+               taskbar chrome, same as before. */
+            if (event->button.button == SDL_BUTTON_LEFT) {
+                if (handle_taskbar_click(app, mx, my)) break;
+            } else if (taskbar_covers_point(&app->taskbar, mx, my)) {
                 break;
             }
+            if (my < TASKBAR_HEIGHT) break; /* an empty gap in the taskbar strip itself */
             int gx, gy;
             float fx, fy;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);

@@ -11,7 +11,8 @@ typedef enum {
     SIG_LOW = 0,
     SIG_HIGH = 1,
     SIG_UNKNOWN = 2,
-    SIG_CONFLICT = 3
+    SIG_CONFLICT = 3,
+    SIG_HIZ = 4 /* tri-stated output (see SN74HC244N) - doesn't drive its net, same as not being connected at all */
 } SignalValue;
 
 #endif
