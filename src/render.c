@@ -394,6 +394,24 @@ static void render_wire_terminal(SDL_Renderer *renderer, TTF_Font *font_large, c
    render_ic_body). Above it, pin names are shown as usual. */
 #define PIN_LABEL_MIN_CELL_PX 9.0f
 
+/* Pin labels are drawn inside the body, growing inward from their own edge
+   (see render_ic_body) - and IC_DIP_WIDTH is a fixed body width regardless
+   of pin count or name length, so a long name (e.g. TLC555's "RESET"/
+   "THRES"/"DISCH" - much longer than the 1-3 char names every other IC in
+   the catalog happens to have) can run past the body's horizontal center
+   and collide with whatever label is growing inward from the opposite side.
+   Shrinks the scale for just THIS one label until it fits within
+   available_px; short labels that already fit are returned unchanged, so
+   this never affects any pin whose name doesn't actually need it. */
+static float fit_label_scale(TTF_Font *font, const char *text, float scale, float available_px) {
+    int tw, th;
+    text_util_measure(font, text, &tw, &th);
+    (void)th;
+    float text_w = tw * scale;
+    if (tw <= 0 || text_w <= available_px) return scale;
+    return scale * (available_px / text_w);
+}
+
 /* Schematic-symbol style IC: fixed-width rectangle body sized by pin count
    (see ic_dip_body_size), a real-DIP-style pin-1 notch on the top edge, pins
    drawn as short stubs poking out past the edge with a dot at the tip, and
@@ -448,14 +466,21 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     draw_top_edge_with_notch(renderer, sx, sy, w, cell, thickness);
 
     if (font_large != NULL && cell >= PIN_LABEL_MIN_CELL_PX) {
+        /* a label may not grow past the body's horizontal center - leaves a
+           small safety gap so left/right labels never touch even when both
+           happen to be exactly at their fitted width */
+        float available = w * 0.5f - 10.0f * scale - 2.0f;
+        if (available < 4.0f) available = 4.0f;
+
         for (int pi = 0; pi < c->pin_count; pi++) {
             const Pin *p = &c->pins[pi];
+            float pin_scale = fit_label_scale(font_large, p->name, scale, available);
             int tw, th;
             text_util_measure(font_large, p->name, &tw, &th);
-            int stw = (int)lroundf(tw * scale);
-            int sth = (int)lroundf(th * scale);
+            int stw = (int)lroundf(tw * pin_scale);
+            int sth = (int)lroundf(th * pin_scale);
             int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(10 * scale) : edge_sx[pi] - (int)lroundf(10 * scale) - stw;
-            text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, scale);
+            text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, pin_scale);
         }
     } else if (font_large != NULL) {
         /* pins are too small to label individually - show one big name

@@ -18,8 +18,20 @@ typedef struct IC_Def {
     int pin_count;
     const IC_PinDef *pins;        /* static array, length == pin_count, ordered by pin_number ascending starting at 1 */
     /* in-place eval: reads PIN_INPUT values, writes PIN_OUTPUT values.
-       pin_values[i] corresponds to pin_number == i + 1. PIN_POWER entries are left untouched. */
+       pin_values[i] corresponds to pin_number == i + 1. PIN_POWER entries are left untouched.
+       Called several times per real simulation frame (see SIM_ITERATIONS in
+       sim.c) so combinational signals can settle - never NULL. */
     void (*eval)(SignalValue *pin_values, int pin_count);
+    /* Optional: called exactly once per real simulation frame (not once per
+       eval() settle iteration - see sim.c's tick_clocked_ics), after this
+       frame's combinational signals have settled, with this component
+       instance's own persistent state (see IC_SEQ_STATE_BYTES in
+       component.h). For ICs whose behavior depends on detecting a genuine
+       clock edge or otherwise needs to remember something eval() can't (a
+       counter must advance exactly once per real clock transition, not once
+       per settle iteration). Leave NULL for purely combinational ICs -
+       almost everything. */
+    void (*clock_edge)(SignalValue *pin_values, int pin_count, unsigned char *state);
 } IC_Def;
 
 #define IC_REGISTRY_MAX 64

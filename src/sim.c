@@ -112,6 +112,28 @@ static void evaluate_ics(Circuit *circuit) {
     }
 }
 
+/* Ticks every IC with a clock_edge callback (see ic_registry.h) exactly once
+   per real simulation frame, using this frame's settled pin values - unlike
+   evaluate_ics above, this must NOT run inside the SIM_ITERATIONS loop, or a
+   single real clock transition would get counted up to SIM_ITERATIONS times. */
+static void tick_clocked_ics(Circuit *circuit) {
+    for (int ci = 0; ci < circuit->component_high_water; ci++) {
+        Component *c = &circuit->components[ci];
+        if (!c->in_use || c->type != COMP_IC || c->ic_def == NULL || c->ic_def->clock_edge == NULL) continue;
+
+        SignalValue tmp[MAX_PINS_PER_COMPONENT];
+        for (int pi = 0; pi < c->pin_count; pi++) {
+            tmp[pi] = c->pins[pi].value;
+        }
+        c->ic_def->clock_edge(tmp, c->pin_count, c->seq_state);
+        for (int pi = 0; pi < c->pin_count; pi++) {
+            if (c->pins[pi].direction == PIN_OUTPUT) {
+                c->pins[pi].value = tmp[pi];
+            }
+        }
+    }
+}
+
 void sim_step(Circuit *circuit) {
     cache_net_roots(circuit);
     for (int iter = 0; iter < SIM_ITERATIONS; iter++) {
@@ -119,7 +141,12 @@ void sim_step(Circuit *circuit) {
         propagate_to_pins(circuit);
         evaluate_ics(circuit);
     }
-    /* final propagate so wire/net rendering reflects the last eval pass */
+    /* clock-edge-triggered ICs (e.g. a counter) tick here, once, using this
+       frame's now-settled CLK/CLR levels - see tick_clocked_ics above */
+    tick_clocked_ics(circuit);
+    /* final propagate so wire/net rendering (and next frame's first
+       combinational pass) reflects the latest state, including whatever
+       tick_clocked_ics just changed */
     gather_drivers(circuit);
     propagate_to_pins(circuit);
     propagate_to_wires(circuit);

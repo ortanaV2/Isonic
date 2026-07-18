@@ -14,7 +14,9 @@
 #include "ics/sn74hc151.h"
 #include "ics/sn74hc153.h"
 #include "ics/sn74hc244.h"
+#include "ics/sn74hc4040.h"
 #include "ics/tc74hc373.h"
+#include "ics/tlc555.h"
 
 #define WINDOW_W 1280
 #define WINDOW_H 800
@@ -79,7 +81,9 @@ int main(int argc, char **argv) {
     ic_sn74hc151_register();
     ic_sn74hc153_register();
     ic_sn74hc244_register();
+    ic_sn74hc4040_register();
     ic_tc74hc373_register();
+    ic_tlc555_register();
 
     App app;
     app_init(&app, WINDOW_W, WINDOW_H);

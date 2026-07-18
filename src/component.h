@@ -11,6 +11,15 @@ typedef struct IC_Def IC_Def; /* forward declaration, defined in ic_registry.h *
    its own. */
 #define MAX_PINS_PER_COMPONENT 20
 
+/* Scratch space for ICs with an IC_Def.clock_edge callback (see
+   ic_registry.h) to remember something across real simulation frames that
+   eval()'s "read back your own previous output" trick can't capture - e.g. a
+   counter's running count, and the clock level last seen (to detect an edge
+   at all). 4 bytes is enough for a 16-bit counter plus a level byte; bump if
+   a future sequential IC needs more. Zeroed for free by component_init_ic's
+   memset - no separate init needed. */
+#define IC_SEQ_STATE_BYTES 4
+
 /* Input/Output are no longer components - they're just wires with a WIRE_KIND_INPUT/
    OUTPUT tag (see circuit.h) so they can be drawn/dragged exactly like any wire. */
 typedef enum {
@@ -32,6 +41,7 @@ typedef struct {
     Pin pins[MAX_PINS_PER_COMPONENT];
     int pin_count;
     int selected;
+    unsigned char seq_state[IC_SEQ_STATE_BYTES]; /* see IC_SEQ_STATE_BYTES above */
 } Component;
 
 /* Initializes an already-allocated component slot for the given IC. */

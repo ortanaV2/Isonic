@@ -16,6 +16,8 @@ static const char *k_category_labels[MENU_CAT_COUNT] = {
     "Demultiplexers",
     "Buffers",
     "Latches",
+    "Counters",
+    "Timers",
 };
 
 typedef struct {
@@ -41,6 +43,8 @@ static const MenuItem k_menu_items[] = {
     { MENU_CAT_DEMULTIPLEXERS, "Dual 1:4 DEMUX (CD4555BE)",   "CD4555BE" },
     { MENU_CAT_BUFFERS, "Tri-State Buffer (SN74HC244N)", "SN74HC244N" },
     { MENU_CAT_LATCHES, "D-Latch (TC74HC373APF)",        "TC74HC373APF" },
+    { MENU_CAT_COUNTERS, "12-Bit Binary Counter (SN74HC4040N)", "SN74HC4040N" },
+    { MENU_CAT_TIMERS, "Timer (TLC555)", "TLC555" },
 };
 #define MENU_ITEM_COUNT ((int)(sizeof(k_menu_items) / sizeof(k_menu_items[0])))
 

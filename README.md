@@ -46,3 +46,5 @@ start placing it:
 - **Demultiplexers** — 1:8 DEMUX (CD74HCT238E), Dual 1:4 DEMUX (CD4555BE)
 - **Buffers** — Tri-State Buffer (SN74HC244N)
 - **Latches** — D-Latch (TC74HC373APF)
+- **Counters** — 12-Bit Binary Counter (SN74HC4040N)
+- **Timers** — Timer (TLC555)
