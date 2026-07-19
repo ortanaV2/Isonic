@@ -14,7 +14,7 @@ void app_init(App *app, int window_w, int window_h) {
     /* loaded much larger than its display size (see label_scale in render.c)
        so zoomed-in IC pin labels stay crisp instead of blurring from bitmap
        upscaling - only used for those, everything else uses the regular font */
-    app->font_large = text_util_load_font(48);
+    app->font_large = text_util_load_font(96); /* keep in sync with LABEL_FONT_POINT_SIZE in render.c */
 
     app->active_tool = TOOL_SELECT;
     app->place_ic_name = NULL;

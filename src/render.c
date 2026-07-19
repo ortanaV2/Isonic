@@ -57,9 +57,29 @@ static float notch_radius_px(float cell) {
 /* The font is loaded at a much higher point size than it is ever displayed at
    (see text_util_load_font call in app.c) so labels stay crisp when the
    scaled blit below magnifies them at higher zoom - rendering small and
-   stretching up caused visible blur/pixelation. */
-#define LABEL_FONT_POINT_SIZE 48.0f
+   stretching up caused visible blur/pixelation. Past label_scale() > 1.0
+   (roughly 2x zoom, since LABEL_FONT_POINT_SIZE is 96 against an 18pt
+   display size) the fixed-resolution bitmap starts getting magnified beyond
+   its own native resolution and blurs again - 96pt pushes that threshold
+   out further than the old 48pt did, though it's still a fixed ceiling, not
+   a true fix (see text_util.c: no per-zoom re-rasterization or caching). */
+#define LABEL_FONT_POINT_SIZE 96.0f
 #define LABEL_DISPLAY_POINT_SIZE 18.0f
+
+/* Screen-space gap, in pixels at zoom 1.0, between a pin/terminal edge and
+   its label - scales with zoom_factor(), not label_scale(), see below. */
+#define LABEL_EDGE_GAP_PX 4.0f
+
+/* Pure zoom multiplier - cell size relative to BASE_CELL_PX, with no font
+   metrics mixed in (unlike label_scale, which also carries the fixed
+   LABEL_DISPLAY_POINT_SIZE/LABEL_FONT_POINT_SIZE ratio). Screen-space
+   paddings/gaps around labels (e.g. "10px of breathing room, at this zoom")
+   need this, not label_scale - using label_scale there made every such gap
+   silently shrink when LABEL_FONT_POINT_SIZE went from 48 to 96, since that
+   ratio is baked into label_scale's output. */
+static float zoom_factor(float cell) {
+    return cell / BASE_CELL_PX;
+}
 
 static float label_scale(float cell) {
     return (cell / BASE_CELL_PX) * (LABEL_DISPLAY_POINT_SIZE / LABEL_FONT_POINT_SIZE);
@@ -397,7 +417,7 @@ int render_wire_terminal_bounds(TTF_Font *font_large, const Camera *cam, const W
     text_util_measure(font_large, text, &tw, &th);
     int stw = (int)lroundf(tw * scale);
     int sth = (int)lroundf(th * scale);
-    int gap = (int)lroundf(10 * scale);
+    int gap = (int)lroundf(LABEL_EDGE_GAP_PX * zoom_factor(cell));
 
     int label_x, label_y;
     if (fabsf(ux) >= fabsf(uy)) {
@@ -516,7 +536,8 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
         /* a label may not grow past the body's horizontal center - leaves a
            small safety gap so left/right labels never touch even when both
            happen to be exactly at their fitted width */
-        float available = w * 0.5f - 10.0f * scale - 2.0f;
+        float gap_px = LABEL_EDGE_GAP_PX * zoom_factor(cell);
+        float available = w * 0.5f - gap_px - 2.0f;
         if (available < 4.0f) available = 4.0f;
 
         for (int pi = 0; pi < c->pin_count; pi++) {
@@ -526,7 +547,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
             text_util_measure(font_large, p->name, &tw, &th);
             int stw = (int)lroundf(tw * pin_scale);
             int sth = (int)lroundf(th * pin_scale);
-            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(10 * scale) : edge_sx[pi] - (int)lroundf(10 * scale) - stw;
+            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(gap_px) : edge_sx[pi] - (int)lroundf(gap_px) - stw;
             text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, pin_scale);
         }
     } else if (font_large != NULL) {
