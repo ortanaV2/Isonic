@@ -7,20 +7,20 @@
    indexing below (array order must stay ascending by pin_number: tmp[i] ==
    pin_number i+1). */
 static const IC_PinDef k_sn74hc32_pins[14] = {
-    { 1,  "1A",  PIN_INPUT },
-    { 2,  "1B",  PIN_INPUT },
-    { 3,  "1Y",  PIN_OUTPUT },
-    { 4,  "2A",  PIN_INPUT },
-    { 5,  "2B",  PIN_INPUT },
-    { 6,  "2Y",  PIN_OUTPUT },
-    { 7,  "GND", PIN_POWER },
-    { 8,  "3Y",  PIN_OUTPUT },
-    { 9,  "3A",  PIN_INPUT },
-    { 10, "3B",  PIN_INPUT },
-    { 11, "4Y",  PIN_OUTPUT },
-    { 12, "4A",  PIN_INPUT },
-    { 13, "4B",  PIN_INPUT },
-    { 14, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "1A", .direction = PIN_INPUT },
+    { .pin_number = 2, .name = "1B", .direction = PIN_INPUT },
+    { .pin_number = 3, .name = "1Y", .direction = PIN_OUTPUT },
+    { .pin_number = 4, .name = "2A", .direction = PIN_INPUT },
+    { .pin_number = 5, .name = "2B", .direction = PIN_INPUT },
+    { .pin_number = 6, .name = "2Y", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 8, .name = "3Y", .direction = PIN_OUTPUT },
+    { .pin_number = 9, .name = "3A", .direction = PIN_INPUT },
+    { .pin_number = 10, .name = "3B", .direction = PIN_INPUT },
+    { .pin_number = 11, .name = "4Y", .direction = PIN_OUTPUT },
+    { .pin_number = 12, .name = "4A", .direction = PIN_INPUT },
+    { .pin_number = 13, .name = "4B", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "VCC", .direction = PIN_POWER },
 };
 
 static SignalValue or2(SignalValue a, SignalValue b) {

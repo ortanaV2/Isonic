@@ -31,6 +31,7 @@ typedef struct {
     PinDirection direction;
     int local_dx, local_dy; /* offset from component origin, in grid cells */
     SignalValue value;       /* resolved net value, cached each sim step */
+    int decorative;          /* see IC_PinDef.decorative (ic_registry.h) - copied in component_init_ic */
 } Pin;
 
 typedef struct {

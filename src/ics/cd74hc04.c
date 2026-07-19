@@ -9,20 +9,20 @@
    drives eval() indexing below (array order must stay ascending by
    pin_number: tmp[i] == pin_number i+1). */
 static const IC_PinDef k_cd74hc04_pins[14] = {
-    { 1,  "1A",  PIN_INPUT },
-    { 2,  "1Y",  PIN_OUTPUT },
-    { 3,  "2A",  PIN_INPUT },
-    { 4,  "2Y",  PIN_OUTPUT },
-    { 5,  "3A",  PIN_INPUT },
-    { 6,  "3Y",  PIN_OUTPUT },
-    { 7,  "GND", PIN_POWER },
-    { 8,  "4Y",  PIN_OUTPUT },
-    { 9,  "4A",  PIN_INPUT },
-    { 10, "5Y",  PIN_OUTPUT },
-    { 11, "5A",  PIN_INPUT },
-    { 12, "6Y",  PIN_OUTPUT },
-    { 13, "6A",  PIN_INPUT },
-    { 14, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "1A", .direction = PIN_INPUT },
+    { .pin_number = 2, .name = "1Y", .direction = PIN_OUTPUT },
+    { .pin_number = 3, .name = "2A", .direction = PIN_INPUT },
+    { .pin_number = 4, .name = "2Y", .direction = PIN_OUTPUT },
+    { .pin_number = 5, .name = "3A", .direction = PIN_INPUT },
+    { .pin_number = 6, .name = "3Y", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 8, .name = "4Y", .direction = PIN_OUTPUT },
+    { .pin_number = 9, .name = "4A", .direction = PIN_INPUT },
+    { .pin_number = 10, .name = "5Y", .direction = PIN_OUTPUT },
+    { .pin_number = 11, .name = "5A", .direction = PIN_INPUT },
+    { .pin_number = 12, .name = "6Y", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "6A", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "VCC", .direction = PIN_POWER },
 };
 
 static SignalValue not1(SignalValue a) {

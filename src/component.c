@@ -35,6 +35,7 @@ void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) 
         p->name = pd->name;
         p->direction = pd->direction;
         p->value = SIG_UNKNOWN;
+        p->decorative = pd->decorative;
         /* stub tips sit one cell outside the body so wires attach past the
            edge, matching a schematic symbol rather than a flush PCB footprint */
         if (pd->pin_number <= per_side) {

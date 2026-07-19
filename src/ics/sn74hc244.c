@@ -9,26 +9,26 @@
    datasheet quirk, not a mistake. Array order must stay ascending by
    pin_number: tmp[i] == pin_number i+1. */
 static const IC_PinDef k_sn74hc244_pins[20] = {
-    { 1,  "1G",  PIN_INPUT },  /* output enable, active low, group 1 */
-    { 2,  "1A1", PIN_INPUT },
-    { 3,  "2Y4", PIN_OUTPUT },
-    { 4,  "1A2", PIN_INPUT },
-    { 5,  "2Y3", PIN_OUTPUT },
-    { 6,  "1A3", PIN_INPUT },
-    { 7,  "2Y2", PIN_OUTPUT },
-    { 8,  "1A4", PIN_INPUT },
-    { 9,  "2Y1", PIN_OUTPUT },
-    { 10, "GND", PIN_POWER },
-    { 11, "2A1", PIN_INPUT },
-    { 12, "1Y4", PIN_OUTPUT },
-    { 13, "2A2", PIN_INPUT },
-    { 14, "1Y3", PIN_OUTPUT },
-    { 15, "2A3", PIN_INPUT },
-    { 16, "1Y2", PIN_OUTPUT },
-    { 17, "2A4", PIN_INPUT },
-    { 18, "1Y1", PIN_OUTPUT },
-    { 19, "2G",  PIN_INPUT },  /* output enable, active low, group 2 */
-    { 20, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "1G", .direction = PIN_INPUT },  /* output enable, active low, group 1 */
+    { .pin_number = 2, .name = "1A1", .direction = PIN_INPUT },
+    { .pin_number = 3, .name = "2Y4", .direction = PIN_OUTPUT },
+    { .pin_number = 4, .name = "1A2", .direction = PIN_INPUT },
+    { .pin_number = 5, .name = "2Y3", .direction = PIN_OUTPUT },
+    { .pin_number = 6, .name = "1A3", .direction = PIN_INPUT },
+    { .pin_number = 7, .name = "2Y2", .direction = PIN_OUTPUT },
+    { .pin_number = 8, .name = "1A4", .direction = PIN_INPUT },
+    { .pin_number = 9, .name = "2Y1", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 11, .name = "2A1", .direction = PIN_INPUT },
+    { .pin_number = 12, .name = "1Y4", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "2A2", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "1Y3", .direction = PIN_OUTPUT },
+    { .pin_number = 15, .name = "2A3", .direction = PIN_INPUT },
+    { .pin_number = 16, .name = "1Y2", .direction = PIN_OUTPUT },
+    { .pin_number = 17, .name = "2A4", .direction = PIN_INPUT },
+    { .pin_number = 18, .name = "1Y1", .direction = PIN_OUTPUT },
+    { .pin_number = 19, .name = "2G", .direction = PIN_INPUT },  /* output enable, active low, group 2 */
+    { .pin_number = 20, .name = "VCC", .direction = PIN_POWER },
 };
 
 /* A tri-state buffer isn't a logic function - it's the whole reason SIG_HIZ

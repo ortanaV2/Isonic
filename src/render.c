@@ -1,10 +1,15 @@
 #include <math.h>
+#include <stdio.h>
 #include "render.h"
 #include "text_util.h"
 
 /* Falstad-style light blue, used both for persistent selection and for the
    temporary "this is what you'd connect to" highlight while dragging a wire. */
 static const SDL_Color SELECTION_COLOR = { 90, 170, 255, 255 };
+/* Lighter than SELECTION_COLOR, used only for the connection dots at a
+   selected/highlighted wire's endpoints - mirrors how a normal wire's own
+   dots (CONNECTION_COLOR, near-white) already read lighter than its line. */
+static const SDL_Color SELECTION_DOT_COLOR = { 165, 210, 255, 255 };
 static const SDL_Color LABEL_COLOR = { 225, 225, 230, 255 };
 static const SDL_Color OUTPUT_LABEL_COLOR = { 140, 140, 146, 255 }; /* dimmer, distinguishes Output from Input */
 static const SDL_Color IC_NAME_LABEL_COLOR = { 140, 140, 146, 255 }; /* grayish body-name label shown once pins are too small to read */
@@ -12,6 +17,8 @@ static const SDL_Color IC_NAME_LABEL_COLOR = { 140, 140, 146, 255 }; /* grayish 
    neutral marker color - only the line/stub itself carries the signal color */
 static const SDL_Color CONNECTION_COLOR = { 235, 235, 240, 255 };
 static const SDL_Color IC_BORDER_COLOR = { 190, 190, 196, 255 };
+static const SDL_Color DIAG_ERROR_COLOR = { 220, 70, 70, 255 };
+static const SDL_Color DIAG_WARNING_COLOR = { 235, 190, 40, 255 };
 
 /* Thickness as a fraction of the current grid cell size, not a flat pixel
    count, so wires/stubs/borders stay proportionally the same thickness
@@ -232,7 +239,7 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
     draw_thick_line(renderer, sfx, sfy, stx, sty, wire_thickness_px(cell));
 
     float r = connection_dot_radius_px(cell);
-    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
+    SDL_SetRenderDrawColor(renderer, SELECTION_DOT_COLOR.r, SELECTION_DOT_COLOR.g, SELECTION_DOT_COLOR.b, 255);
     draw_filled_circle(renderer, sfx, sfy, r);
     draw_filled_circle(renderer, stx, sty, r);
 }
@@ -263,11 +270,38 @@ void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y
     SDL_RenderDrawRect(renderer, &r);
 }
 
+/* Highest-severity diagnostic (if any) that references this wire - ERROR
+   outranks WARNING when a wire happens to be flagged by both. */
+static int wire_diag_color(const DiagnosticSet *diagnostics, int wire_id, SDL_Color *out) {
+    if (diagnostics == NULL) return 0;
+    int found = 0;
+    DiagSeverity worst = DIAG_WARNING;
+    for (int i = 0; i < diagnostics->count; i++) {
+        if (!diagnostic_has_wire(&diagnostics->items[i], wire_id)) continue;
+        if (!found || diagnostics->items[i].severity > worst) worst = diagnostics->items[i].severity;
+        found = 1;
+    }
+    if (found) *out = (worst == DIAG_ERROR) ? DIAG_ERROR_COLOR : DIAG_WARNING_COLOR;
+    return found;
+}
+
 /* Line only - the endpoint dots are drawn later, in a pass over the top of
    every line/stub (see render_wire_dots), so a stub or another wire drawn
-   afterwards can never slice back through an already-placed dot. */
-static void render_wire_line(SDL_Renderer *renderer, const Camera *cam, const Wire *w, SignalValue value, int highlighted) {
-    SDL_Color color = (w->selected || highlighted) ? SELECTION_COLOR : signal_color(value);
+   afterwards can never slice back through an already-placed dot. Color
+   priority: selection/hover always wins (so a flagged wire you're pointing
+   at or have selected reads as blue, not red/yellow), then any diagnostic
+   flagging this wire, then its plain signal color. */
+static void render_wire_line(SDL_Renderer *renderer, const Camera *cam, const Wire *w, int wire_id,
+                              SignalValue value, int highlighted, const DiagnosticSet *diagnostics) {
+    SDL_Color color;
+    SDL_Color diag_color;
+    if (w->selected || highlighted) {
+        color = SELECTION_COLOR;
+    } else if (wire_diag_color(diagnostics, wire_id, &diag_color)) {
+        color = diag_color;
+    } else {
+        color = signal_color(value);
+    }
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
 
     int sfx, sfy, stx, sty;
@@ -322,13 +356,25 @@ static void render_wire_endpoint_marks(SDL_Renderer *renderer, const Camera *cam
     camera_grid_to_screen(cam, w->from_x, w->from_y, &sfx, &sfy);
     camera_grid_to_screen(cam, w->to_x, w->to_y, &stx, &sty);
     float r = connection_dot_radius_px(camera_cell_px(cam));
-    SDL_SetRenderDrawColor(renderer, SELECTION_COLOR.r, SELECTION_COLOR.g, SELECTION_COLOR.b, 255);
+    SDL_SetRenderDrawColor(renderer, SELECTION_DOT_COLOR.r, SELECTION_DOT_COLOR.g, SELECTION_DOT_COLOR.b, 255);
     draw_filled_circle(renderer, sfx, sfy, r);
     draw_filled_circle(renderer, stx, sty, r);
 }
 
+/* An Input wire's terminal always shows what the user actually set it to
+   (w->input_value), never the net's resolved value - once two disagreeing
+   Input wires share a net, sim.c resolves the whole net (including this
+   wire's own circuit->wire_values entry) to SIG_CONFLICT, which would
+   otherwise make the terminal you just set to HIGH silently read back as
+   LOW. Output wires still show the real resolved net value, since they're
+   read-only monitors of what's actually on the wire. */
+static SignalValue terminal_display_value(const Wire *w, SignalValue net_value) {
+    return (w->kind == WIRE_KIND_INPUT) ? (w->input_value ? SIG_HIGH : SIG_LOW) : net_value;
+}
+
 int render_wire_terminal_bounds(TTF_Font *font_large, const Camera *cam, const Wire *w, SignalValue value, SDL_Rect *out_rect) {
     if (w->kind == WIRE_KIND_NORMAL || font_large == NULL) return 0;
+    value = terminal_display_value(w, value);
     float cell = camera_cell_px(cam);
     if (cell < 6.0f) return 0;
     float scale = label_scale(cell);
@@ -383,6 +429,7 @@ static void render_wire_terminal(SDL_Renderer *renderer, TTF_Font *font_large, c
     SDL_Rect bounds;
     if (!render_wire_terminal_bounds(font_large, cam, w, value, &bounds)) return;
 
+    value = terminal_display_value(w, value);
     const char *text = (value == SIG_HIGH) ? "H" : "L";
     SDL_Color label_color = (w->kind == WIRE_KIND_INPUT) ? LABEL_COLOR : OUTPUT_LABEL_COLOR;
     float scale = label_scale(camera_cell_px(cam));
@@ -511,6 +558,7 @@ static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam,
 }
 
 void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit *circuit, const Camera *cam,
+                     const DiagnosticSet *diagnostics,
                      int highlight_component_a, int highlight_wire_a,
                      int highlight_component_b, int highlight_wire_b) {
     /* pass 1: lines, terminals and component bodies */
@@ -518,7 +566,7 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         const Wire *w = &circuit->wires[i];
         if (!w->in_use) continue;
         int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
-        render_wire_line(renderer, cam, w, circuit->wire_values[i], highlighted);
+        render_wire_line(renderer, cam, w, i, circuit->wire_values[i], highlighted, diagnostics);
     }
     for (int i = 0; i < circuit->wire_high_water; i++) {
         const Wire *w = &circuit->wires[i];
@@ -550,4 +598,146 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
         render_wire_endpoint_marks(renderer, cam, w, highlighted);
     }
+}
+
+/* Wires flagged by a diagnostic get their color from render_wire_line
+   (via render_circuit's diagnostics param) instead, so selection/hover can
+   correctly take priority and the wire's own endpoint dots stay drawn on
+   top - see wire_diag_color. This pass only marks flagged pins, since a
+   floating/fan-out pin has no wire of its own to carry the color. */
+void render_diagnostic_highlights(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit,
+                                   const DiagnosticSet *diagnostics) {
+    float cell = camera_cell_px(cam);
+    /* same radius as an ordinary connection dot (draw_lone_connection_dot
+       etc.) and the same reliance on draw_filled_circle's own 1px floor, so
+       this scales identically with zoom instead of standing out as a fixed
+       minimum size once the normal dots shrink past it */
+    float dot_r = connection_dot_radius_px(cell);
+
+    /* two passes so DIAG_ERROR always paints over DIAG_WARNING on any
+       pin flagged by both, instead of draw-order picking the color */
+    for (int pass = 0; pass < 2; pass++) {
+        DiagSeverity want = (pass == 0) ? DIAG_WARNING : DIAG_ERROR;
+        for (int di = 0; di < diagnostics->count; di++) {
+            const Diagnostic *d = &diagnostics->items[di];
+            if (d->severity != want) continue;
+            SDL_Color col = (d->severity == DIAG_ERROR) ? DIAG_ERROR_COLOR : DIAG_WARNING_COLOR;
+            SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
+
+            for (int pi = 0; pi < d->pin_count; pi++) {
+                const Component *c = &circuit->components[d->pins[pi].component_id];
+                if (!c->in_use) continue;
+                int x, y;
+                component_pin_world_pos(c, d->pins[pi].pin_index, &x, &y);
+                int sx, sy;
+                camera_grid_to_screen(cam, x, y, &sx, &sy);
+                draw_filled_circle(renderer, sx, sy, dot_r);
+            }
+        }
+    }
+}
+
+#define DIAG_CHIP_H 26
+#define DIAG_CHIP_PAD_X 10
+#define DIAG_CHIP_MARGIN 8
+
+int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_h,
+                              const DiagnosticSet *diagnostics, int hover_x, int hover_y) {
+    if (font == NULL) return -1;
+    int hovered = -1;
+    int x = DIAG_CHIP_MARGIN;
+    int y = window_h - DIAG_CHIP_MARGIN - DIAG_CHIP_H;
+
+    for (int i = 0; i < diagnostics->count; i++) {
+        const Diagnostic *d = &diagnostics->items[i];
+        SDL_Color col = (d->severity == DIAG_ERROR) ? DIAG_ERROR_COLOR : DIAG_WARNING_COLOR;
+
+        int tw, th;
+        text_util_measure(font, d->summary, &tw, &th);
+        SDL_Rect chip = { x, y, tw + DIAG_CHIP_PAD_X * 2, DIAG_CHIP_H };
+
+        int is_hovered = (hover_x >= chip.x && hover_x < chip.x + chip.w &&
+                           hover_y >= chip.y && hover_y < chip.y + chip.h);
+        if (is_hovered) hovered = i;
+
+        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, is_hovered ? 255 : 220);
+        SDL_RenderFillRect(renderer, &chip);
+        SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
+        SDL_RenderDrawRect(renderer, &chip);
+
+        /* dark text - reads better on bright yellow/red chips than the
+           usual near-white UI label color would */
+        SDL_Color text_col = { 25, 25, 28, 255 };
+        text_util_draw(renderer, font, d->summary, chip.x + DIAG_CHIP_PAD_X, chip.y + (DIAG_CHIP_H - th) / 2, text_col);
+
+        x += chip.w + DIAG_CHIP_MARGIN;
+    }
+    return hovered;
+}
+
+#define DIAG_TOOLTIP_MAX_W 320
+#define DIAG_TOOLTIP_LINE_H 18
+#define DIAG_TOOLTIP_PAD 8
+
+/* Shared by the line-count dry run and the actual draw below - walks text
+   word by word, greedily packing each line up to max_w. draw_col is NULL
+   for the dry run (measure only, no drawing). Returns the line count either way. */
+static int wrap_text(SDL_Renderer *renderer, TTF_Font *font, const char *text, int x, int y, int max_w, const SDL_Color *draw_col) {
+    char line[256] = "";
+    int line_y = y;
+    int lines = 0;
+    const char *p = text;
+    while (*p != '\0') {
+        const char *word_start = p;
+        while (*p != '\0' && *p != ' ') p++;
+        int word_len = (int)(p - word_start);
+        if (*p == ' ') p++;
+
+        char trial[256];
+        if (line[0] != '\0') snprintf(trial, sizeof(trial), "%s %.*s", line, word_len, word_start);
+        else snprintf(trial, sizeof(trial), "%.*s", word_len, word_start);
+
+        int tw, th;
+        text_util_measure(font, trial, &tw, &th);
+        if (tw > max_w && line[0] != '\0') {
+            if (draw_col != NULL) text_util_draw(renderer, font, line, x, line_y, *draw_col);
+            line_y += DIAG_TOOLTIP_LINE_H;
+            lines++;
+            snprintf(line, sizeof(line), "%.*s", word_len, word_start);
+        } else {
+            snprintf(line, sizeof(line), "%s", trial);
+        }
+    }
+    if (line[0] != '\0') {
+        if (draw_col != NULL) text_util_draw(renderer, font, line, x, line_y, *draw_col);
+        lines++;
+    }
+    return lines;
+}
+
+void render_diagnostic_tooltip(SDL_Renderer *renderer, TTF_Font *font, const Diagnostic *diag,
+                                int anchor_x, int anchor_y, int window_w, int window_h) {
+    if (font == NULL) return;
+    int line_count = wrap_text(renderer, font, diag->detail, 0, 0, DIAG_TOOLTIP_MAX_W, NULL);
+    if (line_count <= 0) return;
+
+    int box_w = DIAG_TOOLTIP_MAX_W + DIAG_TOOLTIP_PAD * 2;
+    int box_h = line_count * DIAG_TOOLTIP_LINE_H + DIAG_TOOLTIP_PAD * 2;
+
+    int box_x = anchor_x;
+    int box_y = anchor_y - box_h - 6; /* default: just above the anchor */
+    if (box_y < 0) box_y = anchor_y + 24;       /* not enough room above - flip below instead */
+    if (box_x + box_w > window_w) box_x = window_w - box_w - 4;
+    if (box_x < 0) box_x = 4;
+    if (box_y + box_h > window_h) box_y = window_h - box_h - 4;
+
+    SDL_Rect box = { box_x, box_y, box_w, box_h };
+    SDL_SetRenderDrawColor(renderer, 25, 25, 28, 240);
+    SDL_RenderFillRect(renderer, &box);
+    SDL_Color border = (diag->severity == DIAG_ERROR) ? DIAG_ERROR_COLOR : DIAG_WARNING_COLOR;
+    SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
+    SDL_RenderDrawRect(renderer, &box);
+
+    SDL_Color text_col = { 230, 230, 235, 255 };
+    wrap_text(renderer, font, diag->detail, box_x + DIAG_TOOLTIP_PAD, box_y + DIAG_TOOLTIP_PAD, DIAG_TOOLTIP_MAX_W, &text_col);
 }

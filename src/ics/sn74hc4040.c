@@ -11,22 +11,22 @@
    pins 1-7 go Q12,Q6,Q5,Q7,Q4,Q3,Q2 in that exact non-monotonic order).
    Array order must stay ascending by pin_number: tmp[i] == pin_number i+1. */
 static const IC_PinDef k_sn74hc4040_pins[16] = {
-    { 1,  "Q12", PIN_OUTPUT },
-    { 2,  "Q6",  PIN_OUTPUT },
-    { 3,  "Q5",  PIN_OUTPUT },
-    { 4,  "Q7",  PIN_OUTPUT },
-    { 5,  "Q4",  PIN_OUTPUT },
-    { 6,  "Q3",  PIN_OUTPUT },
-    { 7,  "Q2",  PIN_OUTPUT },
-    { 8,  "GND", PIN_POWER },
-    { 9,  "Q1",  PIN_OUTPUT },
-    { 10, "CLK", PIN_INPUT },  /* counts on the HIGH-to-LOW (falling) transition */
-    { 11, "CLR", PIN_INPUT },  /* asynchronous clear, active high */
-    { 12, "Q9",  PIN_OUTPUT },
-    { 13, "Q8",  PIN_OUTPUT },
-    { 14, "Q10", PIN_OUTPUT },
-    { 15, "Q11", PIN_OUTPUT },
-    { 16, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "Q12", .direction = PIN_OUTPUT },
+    { .pin_number = 2, .name = "Q6", .direction = PIN_OUTPUT },
+    { .pin_number = 3, .name = "Q5", .direction = PIN_OUTPUT },
+    { .pin_number = 4, .name = "Q7", .direction = PIN_OUTPUT },
+    { .pin_number = 5, .name = "Q4", .direction = PIN_OUTPUT },
+    { .pin_number = 6, .name = "Q3", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "Q2", .direction = PIN_OUTPUT },
+    { .pin_number = 8, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 9, .name = "Q1", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "CLK", .direction = PIN_INPUT },  /* counts on the HIGH-to-LOW (falling) transition */
+    { .pin_number = 11, .name = "CLR", .direction = PIN_INPUT },  /* asynchronous clear, active high */
+    { .pin_number = 12, .name = "Q9", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "Q8", .direction = PIN_OUTPUT },
+    { .pin_number = 14, .name = "Q10", .direction = PIN_OUTPUT },
+    { .pin_number = 15, .name = "Q11", .direction = PIN_OUTPUT },
+    { .pin_number = 16, .name = "VCC", .direction = PIN_POWER },
 };
 
 /* No combinational behavior of its own - eval() is a required, always-called

@@ -6,22 +6,22 @@
    component_init_ic) - also drives eval() indexing below (array order must
    stay ascending by pin_number: tmp[i] == pin_number i+1). */
 static const IC_PinDef k_sn74hc151_pins[16] = {
-    { 1,  "D3",  PIN_INPUT },
-    { 2,  "D2",  PIN_INPUT },
-    { 3,  "D1",  PIN_INPUT },
-    { 4,  "D0",  PIN_INPUT },
-    { 5,  "Y",   PIN_OUTPUT },
-    { 6,  "W",   PIN_OUTPUT },
-    { 7,  "G",   PIN_INPUT },  /* strobe/enable, active low */
-    { 8,  "GND", PIN_POWER },
-    { 9,  "C",   PIN_INPUT },  /* select, MSB */
-    { 10, "B",   PIN_INPUT },
-    { 11, "A",   PIN_INPUT },  /* select, LSB */
-    { 12, "D7",  PIN_INPUT },
-    { 13, "D6",  PIN_INPUT },
-    { 14, "D5",  PIN_INPUT },
-    { 15, "D4",  PIN_INPUT },
-    { 16, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "D3", .direction = PIN_INPUT },
+    { .pin_number = 2, .name = "D2", .direction = PIN_INPUT },
+    { .pin_number = 3, .name = "D1", .direction = PIN_INPUT },
+    { .pin_number = 4, .name = "D0", .direction = PIN_INPUT },
+    { .pin_number = 5, .name = "Y", .direction = PIN_OUTPUT },
+    { .pin_number = 6, .name = "W", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "G", .direction = PIN_INPUT },  /* strobe/enable, active low */
+    { .pin_number = 8, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 9, .name = "C", .direction = PIN_INPUT },  /* select, MSB */
+    { .pin_number = 10, .name = "B", .direction = PIN_INPUT },
+    { .pin_number = 11, .name = "A", .direction = PIN_INPUT },  /* select, LSB */
+    { .pin_number = 12, .name = "D7", .direction = PIN_INPUT },
+    { .pin_number = 13, .name = "D6", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "D5", .direction = PIN_INPUT },
+    { .pin_number = 15, .name = "D4", .direction = PIN_INPUT },
+    { .pin_number = 16, .name = "VCC", .direction = PIN_POWER },
 };
 
 static SignalValue not1(SignalValue a) {

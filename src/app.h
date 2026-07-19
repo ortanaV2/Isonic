@@ -6,6 +6,7 @@
 #include "circuit.h"
 #include "camera.h"
 #include "taskbar.h"
+#include "diagnostics.h"
 
 #define MAX_DRAG_ATTACHMENTS 64
 /* Screen-pixel hit-testing tolerance shared by input_handler.c (click/select) and
@@ -17,7 +18,8 @@ typedef enum {
     DRAG_NONE,
     DRAG_COMPONENT,  /* moving a whole IC body, see selected_component_id */
     DRAG_WIRE_BODY,  /* moving a whole wire (both endpoints), see drag_wire_id */
-    DRAG_WIRE_NODE   /* moving every wire endpoint coincident at one point */
+    DRAG_WIRE_NODE,  /* moving every wire endpoint coincident at one point */
+    DRAG_SELECTION   /* moving every currently-.selected component/wire together, e.g. after a marquee select */
 } DragKind;
 
 typedef struct {
@@ -93,6 +95,10 @@ typedef struct {
     WireKind wiring_kind;
     int wire_from_gx, wire_from_gy;
     int wire_cursor_gx, wire_cursor_gy;
+
+    /* recomputed every frame in app_update, right after sim_step so it sees
+       this frame's settled pin values - see diagnostics.h */
+    DiagnosticSet diagnostics;
 } App;
 
 void app_init(App *app, int window_w, int window_h);

@@ -8,22 +8,22 @@
    4:1 sections share both select lines (A, B) but have independent
    active-low enables (1G, 2G) and independent outputs. */
 static const IC_PinDef k_sn74hc153_pins[16] = {
-    { 1,  "1G",  PIN_INPUT },  /* enable, active low, section 1 */
-    { 2,  "B",   PIN_INPUT },  /* select, MSB, shared */
-    { 3,  "1C3", PIN_INPUT },
-    { 4,  "1C2", PIN_INPUT },
-    { 5,  "1C1", PIN_INPUT },
-    { 6,  "1C0", PIN_INPUT },
-    { 7,  "1Y",  PIN_OUTPUT },
-    { 8,  "GND", PIN_POWER },
-    { 9,  "2Y",  PIN_OUTPUT },
-    { 10, "2C0", PIN_INPUT },
-    { 11, "2C1", PIN_INPUT },
-    { 12, "2C2", PIN_INPUT },
-    { 13, "2C3", PIN_INPUT },
-    { 14, "A",   PIN_INPUT },  /* select, LSB, shared */
-    { 15, "2G",  PIN_INPUT },  /* enable, active low, section 2 */
-    { 16, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "1G", .direction = PIN_INPUT },  /* enable, active low, section 1 */
+    { .pin_number = 2, .name = "B", .direction = PIN_INPUT },  /* select, MSB, shared */
+    { .pin_number = 3, .name = "1C3", .direction = PIN_INPUT },
+    { .pin_number = 4, .name = "1C2", .direction = PIN_INPUT },
+    { .pin_number = 5, .name = "1C1", .direction = PIN_INPUT },
+    { .pin_number = 6, .name = "1C0", .direction = PIN_INPUT },
+    { .pin_number = 7, .name = "1Y", .direction = PIN_OUTPUT },
+    { .pin_number = 8, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 9, .name = "2Y", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "2C0", .direction = PIN_INPUT },
+    { .pin_number = 11, .name = "2C1", .direction = PIN_INPUT },
+    { .pin_number = 12, .name = "2C2", .direction = PIN_INPUT },
+    { .pin_number = 13, .name = "2C3", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "A", .direction = PIN_INPUT },  /* select, LSB, shared */
+    { .pin_number = 15, .name = "2G", .direction = PIN_INPUT },  /* enable, active low, section 2 */
+    { .pin_number = 16, .name = "VCC", .direction = PIN_POWER },
 };
 
 /* Selects one of 4 lines by 2-bit address (b is MSB, a is LSB) - CONFLICT/

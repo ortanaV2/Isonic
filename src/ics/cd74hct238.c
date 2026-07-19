@@ -15,22 +15,22 @@
    distributors). Array order must stay ascending by pin_number: tmp[i] ==
    pin_number i+1. */
 static const IC_PinDef k_cd74hct238_pins[16] = {
-    { 1,  "A",   PIN_INPUT },  /* select, LSB */
-    { 2,  "B",   PIN_INPUT },
-    { 3,  "C",   PIN_INPUT },  /* select, MSB */
-    { 4,  "G2A", PIN_INPUT },  /* enable, active low */
-    { 5,  "G2B", PIN_INPUT },  /* enable, active low */
-    { 6,  "G1",  PIN_INPUT },  /* enable, active high */
-    { 7,  "Y7",  PIN_OUTPUT },
-    { 8,  "GND", PIN_POWER },
-    { 9,  "Y6",  PIN_OUTPUT },
-    { 10, "Y5",  PIN_OUTPUT },
-    { 11, "Y4",  PIN_OUTPUT },
-    { 12, "Y3",  PIN_OUTPUT },
-    { 13, "Y2",  PIN_OUTPUT },
-    { 14, "Y1",  PIN_OUTPUT },
-    { 15, "Y0",  PIN_OUTPUT },
-    { 16, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "A", .direction = PIN_INPUT },  /* select, LSB */
+    { .pin_number = 2, .name = "B", .direction = PIN_INPUT },
+    { .pin_number = 3, .name = "C", .direction = PIN_INPUT },  /* select, MSB */
+    { .pin_number = 4, .name = "G2A", .direction = PIN_INPUT },  /* enable, active low */
+    { .pin_number = 5, .name = "G2B", .direction = PIN_INPUT },  /* enable, active low */
+    { .pin_number = 6, .name = "G1", .direction = PIN_INPUT },  /* enable, active high */
+    { .pin_number = 7, .name = "Y7", .direction = PIN_OUTPUT },
+    { .pin_number = 8, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 9, .name = "Y6", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "Y5", .direction = PIN_OUTPUT },
+    { .pin_number = 11, .name = "Y4", .direction = PIN_OUTPUT },
+    { .pin_number = 12, .name = "Y3", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "Y2", .direction = PIN_OUTPUT },
+    { .pin_number = 14, .name = "Y1", .direction = PIN_OUTPUT },
+    { .pin_number = 15, .name = "Y0", .direction = PIN_OUTPUT },
+    { .pin_number = 16, .name = "VCC", .direction = PIN_POWER },
 };
 
 static void cd74hct238_eval(SignalValue *v, int pin_count) {

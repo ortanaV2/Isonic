@@ -31,14 +31,14 @@
    control-voltage pin) is modeled only for pinout fidelity, like OE on
    TC74HC373APF - it has no digital equivalent to wire up. */
 static const IC_PinDef k_tlc555_pins[8] = {
-    { 1, "GND",   PIN_POWER },
-    { 2, "TRIG",  PIN_INPUT },  /* driving low sets the latch (starts a period) */
-    { 3, "OUT",   PIN_OUTPUT },
-    { 4, "RESET", PIN_INPUT },  /* active low, overrides everything */
-    { 5, "CONT",  PIN_INPUT },  /* analog control voltage - not wired, see note above */
-    { 6, "THRES", PIN_INPUT },  /* driving high resets the latch (ends a period) */
-    { 7, "DISCH", PIN_OUTPUT }, /* open-collector: SIG_HIZ while set, LOW while reset */
-    { 8, "VCC",   PIN_POWER },
+    { .pin_number = 1, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 2, .name = "TRIG", .direction = PIN_INPUT },  /* driving low sets the latch (starts a period) */
+    { .pin_number = 3, .name = "OUT", .direction = PIN_OUTPUT },
+    { .pin_number = 4, .name = "RESET", .direction = PIN_INPUT },  /* active low, overrides everything */
+    { .pin_number = 5, .name = "CONT", .direction = PIN_INPUT, .decorative = 1 },  /* analog control voltage - not wired, see note above; decorative so it's not flagged as a floating pin */
+    { .pin_number = 6, .name = "THRES", .direction = PIN_INPUT },  /* driving high resets the latch (ends a period) */
+    { .pin_number = 7, .name = "DISCH", .direction = PIN_OUTPUT }, /* open-collector: SIG_HIZ while set, LOW while reset */
+    { .pin_number = 8, .name = "VCC", .direction = PIN_POWER },
 };
 
 /* No combinational behavior of its own - eval() is a required, always-called

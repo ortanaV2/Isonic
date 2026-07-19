@@ -11,6 +11,15 @@ typedef struct {
                                 pinout for the body to come out correct. */
     const char *name;       /* e.g. "1A", "VCC" */
     PinDirection direction;
+    /* Trailing field, defaults to 0 (not decorative) for every existing
+       positional initializer like { 1, "1A", PIN_INPUT } - only ICs that
+       need to mark a pin decorative add a 4th value. Set 1 for a real,
+       genuine pin that this simulator deliberately never wires up
+       functionally (e.g. TC74HC373APF's OE, TLC555's CONT - see their
+       eval() comments) so the floating-pin warning doesn't flag it: leaving
+       it unconnected is correct here, not a mistake, since nothing in the
+       simulation ever reads it. */
+    int decorative;
 } IC_PinDef;
 
 typedef struct IC_Def {

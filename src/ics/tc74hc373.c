@@ -23,26 +23,26 @@
    asserted (which matches how it's tied in the overwhelming majority of
    schematics anyway). */
 static const IC_PinDef k_tc74hc373_pins[20] = {
-    { 1,  "OE",  PIN_INPUT },  /* output enable, active low - see note above, not wired to tri-state */
-    { 2,  "1Q",  PIN_OUTPUT },
-    { 3,  "1D",  PIN_INPUT },
-    { 4,  "2D",  PIN_INPUT },
-    { 5,  "2Q",  PIN_OUTPUT },
-    { 6,  "3Q",  PIN_OUTPUT },
-    { 7,  "3D",  PIN_INPUT },
-    { 8,  "4D",  PIN_INPUT },
-    { 9,  "4Q",  PIN_OUTPUT },
-    { 10, "GND", PIN_POWER },
-    { 11, "LE",  PIN_INPUT },  /* latch enable, active high, shared by all 8 */
-    { 12, "5Q",  PIN_OUTPUT },
-    { 13, "5D",  PIN_INPUT },
-    { 14, "6D",  PIN_INPUT },
-    { 15, "6Q",  PIN_OUTPUT },
-    { 16, "7Q",  PIN_OUTPUT },
-    { 17, "7D",  PIN_INPUT },
-    { 18, "8D",  PIN_INPUT },
-    { 19, "8Q",  PIN_OUTPUT },
-    { 20, "VCC", PIN_POWER },
+    { .pin_number = 1, .name = "OE", .direction = PIN_INPUT },  /* output enable, active low - see note above, not wired to tri-state. Deliberately NOT marked decorative: the simulator ignores it either way, but real hardware genuinely needs it tied to a defined level (usually GND) - leaving it floating in the schematic is exactly the mistake the floating-pin warning exists to catch. */
+    { .pin_number = 2, .name = "1Q", .direction = PIN_OUTPUT },
+    { .pin_number = 3, .name = "1D", .direction = PIN_INPUT },
+    { .pin_number = 4, .name = "2D", .direction = PIN_INPUT },
+    { .pin_number = 5, .name = "2Q", .direction = PIN_OUTPUT },
+    { .pin_number = 6, .name = "3Q", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "3D", .direction = PIN_INPUT },
+    { .pin_number = 8, .name = "4D", .direction = PIN_INPUT },
+    { .pin_number = 9, .name = "4Q", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "GND", .direction = PIN_POWER },
+    { .pin_number = 11, .name = "LE", .direction = PIN_INPUT },  /* latch enable, active high, shared by all 8 */
+    { .pin_number = 12, .name = "5Q", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "5D", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "6D", .direction = PIN_INPUT },
+    { .pin_number = 15, .name = "6Q", .direction = PIN_OUTPUT },
+    { .pin_number = 16, .name = "7Q", .direction = PIN_OUTPUT },
+    { .pin_number = 17, .name = "7D", .direction = PIN_INPUT },
+    { .pin_number = 18, .name = "8D", .direction = PIN_INPUT },
+    { .pin_number = 19, .name = "8Q", .direction = PIN_OUTPUT },
+    { .pin_number = 20, .name = "VCC", .direction = PIN_POWER },
 };
 
 /* Transparent latch: while LE is high, Q follows D; while LE is low (or

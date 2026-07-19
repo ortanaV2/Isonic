@@ -9,22 +9,22 @@
    specifically because it's the TI-branded variant actually in stock as a
    through-hole DIP (a Harris-branded CD4555BE also exists but is obsolete). */
 static const IC_PinDef k_cd4555_pins[16] = {
-    { 1,  "1E",  PIN_INPUT },  /* enable, active low, section 1 */
-    { 2,  "1A",  PIN_INPUT },
-    { 3,  "1B",  PIN_INPUT },
-    { 4,  "1Q0", PIN_OUTPUT },
-    { 5,  "1Q1", PIN_OUTPUT },
-    { 6,  "1Q2", PIN_OUTPUT },
-    { 7,  "1Q3", PIN_OUTPUT },
-    { 8,  "VSS", PIN_POWER },
-    { 9,  "2Q3", PIN_OUTPUT },
-    { 10, "2Q2", PIN_OUTPUT },
-    { 11, "2Q1", PIN_OUTPUT },
-    { 12, "2Q0", PIN_OUTPUT },
-    { 13, "2B",  PIN_INPUT },
-    { 14, "2A",  PIN_INPUT },
-    { 15, "2E",  PIN_INPUT },  /* enable, active low, section 2 */
-    { 16, "VDD", PIN_POWER },
+    { .pin_number = 1, .name = "1E", .direction = PIN_INPUT },  /* enable, active low, section 1 */
+    { .pin_number = 2, .name = "1A", .direction = PIN_INPUT },
+    { .pin_number = 3, .name = "1B", .direction = PIN_INPUT },
+    { .pin_number = 4, .name = "1Q0", .direction = PIN_OUTPUT },
+    { .pin_number = 5, .name = "1Q1", .direction = PIN_OUTPUT },
+    { .pin_number = 6, .name = "1Q2", .direction = PIN_OUTPUT },
+    { .pin_number = 7, .name = "1Q3", .direction = PIN_OUTPUT },
+    { .pin_number = 8, .name = "VSS", .direction = PIN_POWER },
+    { .pin_number = 9, .name = "2Q3", .direction = PIN_OUTPUT },
+    { .pin_number = 10, .name = "2Q2", .direction = PIN_OUTPUT },
+    { .pin_number = 11, .name = "2Q1", .direction = PIN_OUTPUT },
+    { .pin_number = 12, .name = "2Q0", .direction = PIN_OUTPUT },
+    { .pin_number = 13, .name = "2B", .direction = PIN_INPUT },
+    { .pin_number = 14, .name = "2A", .direction = PIN_INPUT },
+    { .pin_number = 15, .name = "2E", .direction = PIN_INPUT },  /* enable, active low, section 2 */
+    { .pin_number = 16, .name = "VDD", .direction = PIN_POWER },
 };
 
 /* One 1-of-4 section: active-low enable, active-HIGH outputs - the selected

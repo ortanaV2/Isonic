@@ -158,7 +158,10 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
    translate, they don't rotate, and a dragged wire body moves rigidly), so
    there's no need to remember which anchor an attachment came from - see
    apply_drag_attachments below. exclude_wire_id (-1 for none) keeps a wire
-   being body-dragged from attaching to itself. */
+   being body-dragged from attaching to itself. Already-.selected wires are
+   also skipped - they're translated wholesale by the caller instead (see
+   DRAG_SELECTION in app_handle_event), so picking them up here too would
+   double-move them by the same per-frame delta. */
 static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int anchor_count, int exclude_wire_id) {
     app->drag_attach_count = 0;
     for (int ai = 0; ai < anchor_count && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; ai++) {
@@ -166,7 +169,7 @@ static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int an
         for (int wi = 0; wi < app->circuit.wire_high_water && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; wi++) {
             if (wi == exclude_wire_id) continue;
             Wire *w = &app->circuit.wires[wi];
-            if (!w->in_use) continue;
+            if (!w->in_use || w->selected) continue;
             if (w->from_x == px && w->from_y == py) {
                 app->drag_attach_wire_id[app->drag_attach_count] = wi;
                 app->drag_attach_wire_end[app->drag_attach_count] = 0;
@@ -219,6 +222,56 @@ static void begin_wire_body_drag(App *app, int wire_id, int gx, int gy) {
     Wire *w = &app->circuit.wires[wire_id];
     GridPoint anchors[2] = { { w->from_x, w->from_y }, { w->to_x, w->to_y } };
     snapshot_drag_attachments(app, anchors, 2, wire_id);
+}
+
+static int selection_count(const App *app) {
+    int n = 0;
+    for (int i = 0; i < app->circuit.component_high_water; i++) {
+        if (app->circuit.components[i].in_use && app->circuit.components[i].selected) n++;
+    }
+    for (int i = 0; i < app->circuit.wire_high_water; i++) {
+        if (app->circuit.wires[i].in_use && app->circuit.wires[i].selected) n++;
+    }
+    return n;
+}
+
+/* Moving a multi-item selection (marquee or otherwise) drags every already-
+   .selected component/wire together, rigidly, by the same per-frame delta -
+   unlike begin_component_drag/begin_wire_body_drag, this does NOT touch the
+   current selection first, since collapsing it down to just the clicked item
+   is exactly the bug this exists to avoid. Anything unselected still
+   attached to one of the selection's own anchor points (component pins, or
+   a selected wire's own endpoints) is dragged along too, same as a single-
+   item drag - see snapshot_drag_attachments. */
+static void begin_selection_drag(App *app, int gx, int gy) {
+    app->drag_kind = DRAG_SELECTION;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+
+    Circuit *circuit = &app->circuit;
+    GridPoint anchors[MAX_DRAG_ATTACHMENTS];
+    int anchor_count = 0;
+    for (int i = 0; i < circuit->component_high_water && anchor_count < MAX_DRAG_ATTACHMENTS; i++) {
+        Component *c = &circuit->components[i];
+        if (!c->in_use || !c->selected) continue;
+        for (int pi = 0; pi < c->pin_count && anchor_count < MAX_DRAG_ATTACHMENTS; pi++) {
+            component_pin_world_pos(c, pi, &anchors[anchor_count].x, &anchors[anchor_count].y);
+            anchor_count++;
+        }
+    }
+    for (int i = 0; i < circuit->wire_high_water && anchor_count < MAX_DRAG_ATTACHMENTS; i++) {
+        Wire *w = &circuit->wires[i];
+        if (!w->in_use || !w->selected) continue;
+        anchors[anchor_count].x = w->from_x;
+        anchors[anchor_count].y = w->from_y;
+        anchor_count++;
+        if (anchor_count < MAX_DRAG_ATTACHMENTS) {
+            anchors[anchor_count].x = w->to_x;
+            anchors[anchor_count].y = w->to_y;
+            anchor_count++;
+        }
+    }
+    snapshot_drag_attachments(app, anchors, anchor_count, -1);
 }
 
 /* A couple pixels of slack around the exact node point, same idea as
@@ -417,13 +470,24 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
     int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
     if (comp_id >= 0) {
-        begin_component_drag(app, comp_id, gx, gy);
+        /* clicking a component that's already part of a multi-item selection
+           drags the whole selection, instead of collapsing it down to just
+           this one component (see begin_selection_drag) */
+        if (app->circuit.components[comp_id].selected && selection_count(app) > 1) {
+            begin_selection_drag(app, gx, gy);
+        } else {
+            begin_component_drag(app, comp_id, gx, gy);
+        }
         return;
     }
 
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
-        begin_wire_body_drag(app, wire_id, gx, gy);
+        if (app->circuit.wires[wire_id].selected && selection_count(app) > 1) {
+            begin_selection_drag(app, gx, gy);
+        } else {
+            begin_wire_body_drag(app, wire_id, gx, gy);
+        }
         return;
     }
 
@@ -550,7 +614,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
                         w->to_x += dx;
                         w->to_y += dy;
                         apply_drag_attachments(app, dx, dy);
-                    } else { /* DRAG_WIRE_NODE */
+                    } else if (app->drag_kind == DRAG_WIRE_NODE) {
                         for (int i = 0; i < app->drag_node_count; i++) {
                             Wire *w = &app->circuit.wires[app->drag_node_wire_id[i]];
                             if (app->drag_node_wire_end[i] == 0) {
@@ -561,6 +625,22 @@ void app_handle_event(App *app, const SDL_Event *event) {
                                 w->to_y += dy;
                             }
                         }
+                    } else { /* DRAG_SELECTION */
+                        for (int i = 0; i < app->circuit.component_high_water; i++) {
+                            Component *c = &app->circuit.components[i];
+                            if (!c->in_use || !c->selected) continue;
+                            c->grid_x += dx;
+                            c->grid_y += dy;
+                        }
+                        for (int i = 0; i < app->circuit.wire_high_water; i++) {
+                            Wire *w = &app->circuit.wires[i];
+                            if (!w->in_use || !w->selected) continue;
+                            w->from_x += dx;
+                            w->from_y += dy;
+                            w->to_x += dx;
+                            w->to_y += dy;
+                        }
+                        apply_drag_attachments(app, dx, dy);
                     }
                     circuit_rebuild_nets(&app->circuit);
                 }
