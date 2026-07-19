@@ -11,6 +11,8 @@ This also makes Isonic the schematic-design foundation for PCB development —
 pairing schematic entry with the groundwork for PCB layout and routing in one
 tool.
 
+<img width="1278" height="829" alt="image" src="https://github.com/user-attachments/assets/022658c9-fbef-466e-829c-1f1f9258006a" />
+
 ## Building
 
 Requires a C11 compiler, SDL2, and SDL2_ttf (`sdl2-config` must be on PATH).
