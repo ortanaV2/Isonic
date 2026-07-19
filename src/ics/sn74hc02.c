@@ -34,8 +34,9 @@ static SignalValue nor2(SignalValue a, SignalValue b) {
     return SIG_HIGH;
 }
 
-static void sn74hc02_eval(SignalValue *v, int pin_count) {
+static void sn74hc02_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 14 for this IC */
+    (void)state;
     v[0]  = nor2(v[1], v[2]);   /* 1Y = NOT(1A | 1B) */
     v[3]  = nor2(v[4], v[5]);   /* 2Y = NOT(2A | 2B) */
     v[9]  = nor2(v[7], v[8]);   /* 3Y = NOT(3A | 3B) */

@@ -5,11 +5,11 @@
 
 typedef struct IC_Def IC_Def; /* forward declaration, defined in ic_registry.h */
 
-/* 20 to fit the widest DIP package currently modeled (SN74HC244N/TC74HC373APF,
-   20-pin octal chips) - every array/loop bound elsewhere derives from this
-   macro rather than hardcoding a pin count, so raising it is sufficient on
-   its own. */
-#define MAX_PINS_PER_COMPONENT 20
+/* 28 to fit the widest DIP package currently modeled (AT28C64B-15PU, a
+   28-pin EEPROM) - every array/loop bound elsewhere derives from this macro
+   rather than hardcoding a pin count, so raising it is sufficient on its
+   own. */
+#define MAX_PINS_PER_COMPONENT 28
 
 /* Scratch space for ICs with an IC_Def.clock_edge callback (see
    ic_registry.h) to remember something across real simulation frames that

@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "taskbar.h"
 #include "diagnostics.h"
+#include "data_editor.h"
 
 #define MAX_DRAG_ATTACHMENTS 64
 /* Screen-pixel hit-testing tolerance shared by input_handler.c (click/select) and
@@ -49,6 +50,16 @@ typedef struct {
     DragKind drag_kind;
     int drag_last_gx, drag_last_gy; /* previous frame's cursor grid cell, for computing per-frame deltas */
     int drag_wire_id;               /* which wire, only for DRAG_WIRE_BODY */
+
+    /* DRAG_SELECTION: which single component/wire was actually clicked to
+       start the drag (-1/-1 if neither applies), and whether the drag ever
+       moved anything. A plain click-and-release on an item that happens to
+       be part of a bigger existing selection should still collapse the
+       selection down to just that one item, same as clicking any other
+       unselected item always has - only an actual drag should preserve and
+       move the whole group. See finish_drag. */
+    int drag_click_component_id, drag_click_wire_id;
+    int drag_moved;
 
     /* DRAG_COMPONENT/DRAG_WIRE_BODY: wires whose endpoint coincided with one
        of the dragged thing's anchor points (pins, or the wire's own two ends)
@@ -99,6 +110,9 @@ typedef struct {
     /* recomputed every frame in app_update, right after sim_step so it sees
        this frame's settled pin values - see diagnostics.h */
     DiagnosticSet diagnostics;
+
+    /* "Manage Data" EEPROM content editor - see data_editor.h */
+    DataEditor data_editor;
 } App;
 
 void app_init(App *app, int window_w, int window_h);

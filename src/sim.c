@@ -103,7 +103,7 @@ static void evaluate_ics(Circuit *circuit) {
         for (int pi = 0; pi < c->pin_count; pi++) {
             tmp[pi] = c->pins[pi].value;
         }
-        c->ic_def->eval(tmp, c->pin_count);
+        c->ic_def->eval(tmp, c->pin_count, c->seq_state);
         for (int pi = 0; pi < c->pin_count; pi++) {
             if (c->pins[pi].direction == PIN_OUTPUT) {
                 c->pins[pi].value = tmp[pi];

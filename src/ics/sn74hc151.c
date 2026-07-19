@@ -41,8 +41,9 @@ static SignalValue mux8(const SignalValue *d, SignalValue a, SignalValue b, Sign
     return d[sel];
 }
 
-static void sn74hc151_eval(SignalValue *v, int pin_count) {
+static void sn74hc151_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 16 for this IC */
+    (void)state;
     SignalValue strobe = v[6]; /* G, active low */
 
     if (strobe == SIG_CONFLICT) {

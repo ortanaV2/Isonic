@@ -55,8 +55,9 @@ static void latch(SignalValue *q, SignalValue d, SignalValue le) {
     if (le == SIG_HIGH) *q = d;
 }
 
-static void tc74hc373_eval(SignalValue *v, int pin_count) {
+static void tc74hc373_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 20 for this IC */
+    (void)state;
     SignalValue le = v[10];
     latch(&v[1], v[2], le);   /* 1Q = 1D */
     latch(&v[4], v[3], le);   /* 2Q = 2D */

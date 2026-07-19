@@ -33,8 +33,9 @@ static const IC_PinDef k_cd74hct238_pins[16] = {
     { .pin_number = 16, .name = "VCC", .direction = PIN_POWER },
 };
 
-static void cd74hct238_eval(SignalValue *v, int pin_count) {
+static void cd74hct238_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 16 for this IC */
+    (void)state;
     SignalValue a = v[0], b = v[1], c = v[2];
     SignalValue g2a = v[3], g2b = v[4], g1 = v[5];
     const int y_idx[8] = { 14, 13, 12, 11, 10, 9, 8, 6 }; /* Y0..Y7 */

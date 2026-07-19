@@ -31,6 +31,7 @@ typedef enum {
     MENU_CAT_LATCHES,
     MENU_CAT_COUNTERS,
     MENU_CAT_TIMERS,
+    MENU_CAT_MEMORY,
     MENU_CAT_COUNT
 } MenuCategory;
 

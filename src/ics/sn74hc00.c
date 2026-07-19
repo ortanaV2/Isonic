@@ -30,8 +30,9 @@ static SignalValue nand2(SignalValue a, SignalValue b) {
     return SIG_LOW;
 }
 
-static void sn74hc00_eval(SignalValue *v, int pin_count) {
+static void sn74hc00_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 14 for this IC */
+    (void)state;
     v[2]  = nand2(v[0], v[1]);   /* 1Y = NOT(1A & 1B)  */
     v[5]  = nand2(v[3], v[4]);   /* 2Y = NOT(2A & 2B)  */
     v[7]  = nand2(v[8], v[9]);   /* 3Y = NOT(3A & 3B)  */

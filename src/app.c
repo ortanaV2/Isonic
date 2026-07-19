@@ -51,6 +51,8 @@ void app_init(App *app, int window_w, int window_h) {
     app->wire_cursor_gy = 0;
 
     app->diagnostics.count = 0;
+
+    data_editor_init(&app->data_editor);
 }
 
 void app_shutdown(App *app) {
@@ -196,11 +198,12 @@ void app_render(App *app, SDL_Renderer *renderer) {
     if (pending_ic != NULL) {
         int mx, my;
         SDL_GetMouseState(&mx, &my);
-        /* suppressed while the cursor is over the taskbar strip or (if open)
-           the Components dropdown - seeing the placement ghost peek out from
-           behind the menu looks like hovering a menu row might place a part,
-           which it doesn't (see taskbar_covers_point) */
-        if (!taskbar_covers_point(&app->taskbar, mx, my)) {
+        /* suppressed while the cursor is over the taskbar strip, the (if
+           open) Components dropdown, or the (if open) Manage Data panel -
+           seeing the placement ghost peek out from behind either looks like
+           hovering it might place a part, which it doesn't (see
+           taskbar_covers_point/data_editor_covers_point) */
+        if (!taskbar_covers_point(&app->taskbar, mx, my) && !data_editor_covers_point(&app->data_editor, mx, my)) {
             int gx, gy, w, h;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
@@ -216,7 +219,17 @@ void app_render(App *app, SDL_Renderer *renderer) {
 
     int hover_mx, hover_my;
     SDL_GetMouseState(&hover_mx, &hover_my);
-    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, app->place_ic_name, hover_mx, hover_my);
+    /* place_ic_name itself is deliberately never cleared just for switching
+       tools (see app.h - it's what lets reopening the Components dropdown or
+       placing several copies in a row remember the last IC without
+       reselecting it), so the dropdown's row highlight has to gate on
+       active_tool itself instead of just checking place_ic_name != NULL -
+       otherwise it stays highlighted forever after switching to Select/
+       Wire/Input, well past the place-mode it was actually meant to show. */
+    const char *highlighted_ic = (app->active_tool == TOOL_PLACE_IC) ? app->place_ic_name : NULL;
+    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, highlighted_ic, hover_mx, hover_my);
+    data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,
+                        app->window_w, app->window_h, hover_mx, hover_my);
 
     /* the bottom-left chip stack always renders on top of everything else;
        a hovered chip wins over a hovered canvas target if somehow both are

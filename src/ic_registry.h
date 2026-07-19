@@ -29,8 +29,13 @@ typedef struct IC_Def {
     /* in-place eval: reads PIN_INPUT values, writes PIN_OUTPUT values.
        pin_values[i] corresponds to pin_number == i + 1. PIN_POWER entries are left untouched.
        Called several times per real simulation frame (see SIM_ITERATIONS in
-       sim.c) so combinational signals can settle - never NULL. */
-    void (*eval)(SignalValue *pin_values, int pin_count);
+       sim.c) so combinational signals can settle - never NULL. state is this
+       component instance's own persistent scratch (same buffer clock_edge
+       gets, see IC_SEQ_STATE_BYTES in component.h) - almost every IC ignores
+       it (purely combinational), but one that needs its own per-instance
+       identity even for a combinational read (e.g. AT28C64B, to know which
+       slot of its private memory pool is "this" chip) can use it. */
+    void (*eval)(SignalValue *pin_values, int pin_count, unsigned char *state);
     /* Optional: called exactly once per real simulation frame (not once per
        eval() settle iteration - see sim.c's tick_clocked_ics), after this
        frame's combinational signals have settled, with this component

@@ -9,6 +9,7 @@
 #endif
 #include "app.h"
 #include "ic_registry.h"
+#include "ics/at28c64b.h"
 #include "ics/cd4555.h"
 #include "ics/cd74hc04.h"
 #include "ics/cd74hct238.h"
@@ -180,6 +181,7 @@ int main(int argc, char **argv) {
     set_window_icon(window);
 #endif
 
+    ic_at28c64b_register();
     ic_cd4555_register();
     ic_cd74hc04_register();
     ic_cd74hct238_register();

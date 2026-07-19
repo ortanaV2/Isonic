@@ -33,9 +33,10 @@ static const IC_PinDef k_sn74hc4040_pins[16] = {
    hook (see ic_registry.h), but this IC does all its actual work in
    sn74hc4040_clock_edge below, once per real frame rather than once per
    settle iteration. */
-static void sn74hc4040_eval(SignalValue *v, int pin_count) {
+static void sn74hc4040_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)v;
     (void)pin_count;
+    (void)state;
 }
 
 /* Q1 (LSB, bit 0) through Q12 (MSB, bit 11) -> absolute pin index, read off

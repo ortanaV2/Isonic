@@ -46,9 +46,10 @@ static const IC_PinDef k_tlc555_pins[8] = {
    frame in tlc555_clock_edge below (the free-running internal timer needs
    the same "once per frame, not once per settle iteration" treatment a
    clocked counter does - see sim.c's tick_clocked_ics). */
-static void tlc555_eval(SignalValue *v, int pin_count) {
+static void tlc555_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)v;
     (void)pin_count;
+    (void)state;
 }
 
 /* Frames per half-cycle of the internal free-running timer (60 FPS target -

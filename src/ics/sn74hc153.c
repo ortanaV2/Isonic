@@ -43,8 +43,9 @@ static SignalValue mux_section(SignalValue enable, const SignalValue *c, SignalV
     return mux4(c, a, b);
 }
 
-static void sn74hc153_eval(SignalValue *v, int pin_count) {
+static void sn74hc153_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 16 for this IC */
+    (void)state;
     SignalValue a = v[13], b = v[1];
     SignalValue c1[4] = { v[5], v[4], v[3], v[2] };    /* 1C0, 1C1, 1C2, 1C3 */
     SignalValue c2[4] = { v[9], v[10], v[11], v[12] }; /* 2C0, 2C1, 2C2, 2C3 */

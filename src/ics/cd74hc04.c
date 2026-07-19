@@ -31,8 +31,9 @@ static SignalValue not1(SignalValue a) {
     return (a == SIG_HIGH) ? SIG_LOW : SIG_HIGH;
 }
 
-static void cd74hc04_eval(SignalValue *v, int pin_count) {
+static void cd74hc04_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 14 for this IC */
+    (void)state;
     v[1]  = not1(v[0]);  /* 1Y = NOT 1A */
     v[3]  = not1(v[2]);  /* 2Y = NOT 2A */
     v[5]  = not1(v[4]);  /* 3Y = NOT 3A */

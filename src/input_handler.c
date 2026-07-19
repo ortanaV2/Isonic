@@ -68,6 +68,53 @@ static void cancel_transient_actions(App *app) {
     app->active_tool = TOOL_SELECT;
 }
 
+/* Escape backs out of exactly one thing per press, in priority order - not
+   everything transient at once (that's what cancel_transient_actions above
+   is for, used when switching tools/pasting, a deliberate "start fresh"
+   moment rather than a "step back" one). Pressing Escape while placing a
+   part with the Manage Data panel open should only cancel the placement,
+   not also close the panel underneath it, which has nothing to do with
+   what the user was actually backing out of - so each level only falls
+   through to the next once everything above it is already inactive. */
+static void handle_escape(App *app) {
+    if (app_pending_place_ic(app) != NULL) {
+        app->pasting = 0;
+        if (app->active_tool == TOOL_PLACE_IC) app->active_tool = TOOL_SELECT;
+        app->place_ic_name = NULL;
+        return;
+    }
+    if (app->wiring) {
+        app->wiring = 0;
+        app->wiring_kind = WIRE_KIND_NORMAL;
+        return;
+    }
+    if (app->drag_kind != DRAG_NONE) {
+        clear_wire_node_marks(app);
+        app->drag_kind = DRAG_NONE;
+        app->drag_attach_count = 0;
+        return;
+    }
+    if (app->marquee_active) {
+        app->marquee_active = 0;
+        return;
+    }
+    if (app->taskbar.menu_open) {
+        app->taskbar.menu_open = 0;
+        return;
+    }
+    if (app->data_editor.open) {
+        app->data_editor.open = 0;
+        return;
+    }
+    /* nothing transient left to back out of - lowest priority is dropping
+       back to the idle Select tool (e.g. Input/Wire/Output was armed but
+       never actually used to start dragging out a wire) and clearing
+       whatever's selected on the canvas, together in the same press since
+       neither is an "in-progress action" worth a separate Escape of its own. */
+    app->active_tool = TOOL_SELECT;
+    clear_selection(app);
+}
+
 /* Ctrl+C - copies a component and immediately starts a placement-at-cursor
    preview for it, same click-to-place interaction as the taskbar's Place
    tools but without a taskbar slot. Which component: whatever is directly
@@ -242,11 +289,18 @@ static int selection_count(const App *app) {
    is exactly the bug this exists to avoid. Anything unselected still
    attached to one of the selection's own anchor points (component pins, or
    a selected wire's own endpoints) is dragged along too, same as a single-
-   item drag - see snapshot_drag_attachments. */
-static void begin_selection_drag(App *app, int gx, int gy) {
+   item drag - see snapshot_drag_attachments. click_component_id/
+   click_wire_id (one of them -1) is whichever single item was actually
+   clicked to start this drag - see the drag_click_ and drag_moved fields'
+   comment in app.h and finish_drag: a plain click with no movement still
+   collapses down to just that one item. */
+static void begin_selection_drag(App *app, int gx, int gy, int click_component_id, int click_wire_id) {
     app->drag_kind = DRAG_SELECTION;
     app->drag_last_gx = gx;
     app->drag_last_gy = gy;
+    app->drag_click_component_id = click_component_id;
+    app->drag_click_wire_id = click_wire_id;
+    app->drag_moved = 0;
 
     Circuit *circuit = &app->circuit;
     GridPoint anchors[MAX_DRAG_ATTACHMENTS];
@@ -474,7 +528,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
            drags the whole selection, instead of collapsing it down to just
            this one component (see begin_selection_drag) */
         if (app->circuit.components[comp_id].selected && selection_count(app) > 1) {
-            begin_selection_drag(app, gx, gy);
+            begin_selection_drag(app, gx, gy, comp_id, -1);
         } else {
             begin_component_drag(app, comp_id, gx, gy);
         }
@@ -484,7 +538,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         if (app->circuit.wires[wire_id].selected && selection_count(app) > 1) {
-            begin_selection_drag(app, gx, gy);
+            begin_selection_drag(app, gx, gy, -1, wire_id);
         } else {
             begin_wire_body_drag(app, wire_id, gx, gy);
         }
@@ -510,6 +564,15 @@ static void finish_wire(App *app, int gx, int gy) {
 }
 
 static void finish_drag(App *app) {
+    /* a plain click-and-release on an item that was part of a bigger
+       selection (no actual drag movement) collapses the selection down to
+       just that one item - same as clicking any other unselected item
+       always has. Only a real drag preserves and moves the whole group -
+       see begin_selection_drag. */
+    if (app->drag_kind == DRAG_SELECTION && !app->drag_moved) {
+        if (app->drag_click_component_id >= 0) select_component(app, app->drag_click_component_id);
+        else if (app->drag_click_wire_id >= 0) select_wire(app, app->drag_click_wire_id);
+    }
     clear_wire_node_marks(app);
     app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
@@ -533,7 +596,9 @@ void app_handle_event(App *app, const SDL_Event *event) {
         case SDL_MOUSEWHEEL: {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
-            camera_zoom_at(&app->camera, mx, my, event->wheel.y);
+            if (!data_editor_handle_wheel(&app->data_editor, mx, my, event->wheel.y)) {
+                camera_zoom_at(&app->camera, mx, my, event->wheel.y);
+            }
             break;
         }
 
@@ -545,10 +610,13 @@ void app_handle_event(App *app, const SDL_Event *event) {
                (which knows its own bounds, including the dropdown, and
                reports back a miss so the click can fall through to the
                canvas); other buttons are just swallowed if they land on
-               taskbar chrome, same as before. */
+               taskbar chrome, same as before. Manage Data's button/panel get
+               the same treatment right after, for the same reason. */
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (handle_taskbar_click(app, mx, my)) break;
-            } else if (taskbar_covers_point(&app->taskbar, mx, my)) {
+                if (data_editor_handle_click(&app->data_editor, data_editor_eligible(&app->circuit), mx, my)) break;
+            } else if (taskbar_covers_point(&app->taskbar, mx, my) ||
+                       data_editor_covers_point(&app->data_editor, mx, my)) {
                 break;
             }
             if (my < TASKBAR_HEIGHT) break; /* an empty gap in the taskbar strip itself */
@@ -571,6 +639,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             int gx, gy;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             if (event->button.button == SDL_BUTTON_LEFT) {
+                data_editor_handle_release(&app->data_editor);
                 if (app->wiring) finish_wire(app, gx, gy);
                 else if (app->drag_kind != DRAG_NONE) finish_drag(app);
                 else if (app->marquee_active) finish_marquee_select(app);
@@ -581,6 +650,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
         }
 
         case SDL_MOUSEMOTION: {
+            data_editor_handle_motion(&app->data_editor, event->motion.y);
             if (app->panning) {
                 camera_pan(&app->camera, event->motion.xrel, event->motion.yrel);
             }
@@ -601,6 +671,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 if (dx != 0 || dy != 0) {
                     app->drag_last_gx = gx;
                     app->drag_last_gy = gy;
+                    app->drag_moved = 1;
 
                     if (app->drag_kind == DRAG_COMPONENT) {
                         Component *c = &app->circuit.components[app->selected_component_id];
@@ -653,8 +724,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             if (sc == SDL_SCANCODE_DELETE || sc == SDL_SCANCODE_BACKSPACE) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
-                cancel_transient_actions(app);
-                clear_selection(app);
+                handle_escape(app);
             } else if (sc == SDL_SCANCODE_W) {
                 set_active_tool(app, TOOL_WIRE);
             } else if (sc == SDL_SCANCODE_SPACE) {

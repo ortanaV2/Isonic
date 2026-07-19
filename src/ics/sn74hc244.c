@@ -43,8 +43,9 @@ static SignalValue buf_tristate(SignalValue oe, SignalValue a) {
     return a; /* oe == SIG_LOW: enabled, straight non-inverting passthrough */
 }
 
-static void sn74hc244_eval(SignalValue *v, int pin_count) {
+static void sn74hc244_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 20 for this IC */
+    (void)state;
     SignalValue g1 = v[0], g2 = v[18];
     v[17] = buf_tristate(g1, v[1]); /* 1Y1 = 1A1 */
     v[15] = buf_tristate(g1, v[3]); /* 1Y2 = 1A2 */

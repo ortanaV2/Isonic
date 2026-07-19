@@ -29,8 +29,9 @@ static SignalValue and2(SignalValue a, SignalValue b) {
     return SIG_HIGH;
 }
 
-static void sn74hc08_eval(SignalValue *v, int pin_count) {
+static void sn74hc08_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 14 for this IC */
+    (void)state;
     v[2]  = and2(v[0], v[1]);   /* 1Y = 1A & 1B  */
     v[5]  = and2(v[3], v[4]);   /* 2Y = 2A & 2B  */
     v[7]  = and2(v[8], v[9]);   /* 3Y = 3A & 3B  */

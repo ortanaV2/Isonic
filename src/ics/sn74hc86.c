@@ -29,8 +29,9 @@ static SignalValue xor2(SignalValue a, SignalValue b) {
     return (a != b) ? SIG_HIGH : SIG_LOW;
 }
 
-static void sn74hc86_eval(SignalValue *v, int pin_count) {
+static void sn74hc86_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 14 for this IC */
+    (void)state;
     v[2]  = xor2(v[0], v[1]);   /* 1Y = 1A ^ 1B  */
     v[5]  = xor2(v[3], v[4]);   /* 2Y = 2A ^ 2B  */
     v[7]  = xor2(v[8], v[9]);   /* 3Y = 3A ^ 3B  */

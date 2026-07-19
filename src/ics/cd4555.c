@@ -53,8 +53,9 @@ static void demux4_active_high_section(SignalValue *v, const int y_idx[4], Signa
     }
 }
 
-static void cd4555_eval(SignalValue *v, int pin_count) {
+static void cd4555_eval(SignalValue *v, int pin_count, unsigned char *state) {
     (void)pin_count; /* always 16 for this IC */
+    (void)state;
     static const int y1[4] = { 3, 4, 5, 6 };   /* 1Q0..1Q3 */
     static const int y2[4] = { 11, 10, 9, 8 }; /* 2Q0..2Q3 */
     demux4_active_high_section(v, y1, v[0], v[1], v[2]);    /* 1E, 1A, 1B */

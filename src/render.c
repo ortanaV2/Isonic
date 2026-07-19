@@ -19,6 +19,15 @@ static const SDL_Color CONNECTION_COLOR = { 235, 235, 240, 255 };
 static const SDL_Color IC_BORDER_COLOR = { 190, 190, 196, 255 };
 static const SDL_Color DIAG_ERROR_COLOR = { 220, 70, 70, 255 };
 static const SDL_Color DIAG_WARNING_COLOR = { 235, 190, 40, 255 };
+/* A bit more saturated than DIAG_ERROR_COLOR/DIAG_WARNING_COLOR above - used
+   only for the bottom-left diagnostics panel's chips (render_diagnostics_panel),
+   which read a bit washed-out/pastel at the plain diagnostic color and a
+   small block of solid color, unlike a thin wire outline, can afford to be
+   a little punchier without looking gaudy on the canvas itself. Blue nudged
+   up a touch from a first pass at this that leaned too warm/orange for both
+   colors (red reading coral-ish, amber reading orange-ish). */
+static const SDL_Color DIAG_PANEL_ERROR_COLOR = { 220, 65, 60, 255 };
+static const SDL_Color DIAG_PANEL_WARNING_COLOR = { 235, 175, 45, 255 };
 
 /* Thickness as a fraction of the current grid cell size, not a flat pixel
    count, so wires/stubs/borders stay proportionally the same thickness
@@ -671,7 +680,7 @@ int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_
 
     for (int i = 0; i < diagnostics->count; i++) {
         const Diagnostic *d = &diagnostics->items[i];
-        SDL_Color col = (d->severity == DIAG_ERROR) ? DIAG_ERROR_COLOR : DIAG_WARNING_COLOR;
+        SDL_Color col = (d->severity == DIAG_ERROR) ? DIAG_PANEL_ERROR_COLOR : DIAG_PANEL_WARNING_COLOR;
 
         int tw, th;
         text_util_measure(font, d->summary, &tw, &th);
