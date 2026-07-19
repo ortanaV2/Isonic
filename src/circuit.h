@@ -32,11 +32,54 @@ typedef struct {
     int selected;
     WireKind kind;
     int input_value; /* only meaningful when kind == WIRE_KIND_INPUT; user-toggled */
+    int layer_slot;   /* index into Circuit.layers[] - which copper layer this wire is routed on, see MAX_LAYERS below */
 } Wire;
 
 typedef struct {
     int x, y;
 } GridPoint;
+
+/* LAYER_ROLE_GND/POWER layers are modeled as a real continuous plane, not
+   routed traces: every wire on such a layer is unioned into one net
+   together regardless of position (see circuit_rebuild_nets), and forces
+   that net LOW/HIGH respectively (see sim.c's gather_drivers) - "tapping
+   in" anywhere on the layer is enough, no routed path between two taps is
+   needed, same as a real ground/power pour. Exactly one layer holds each
+   of these two roles at a time, and neither can be deleted (see
+   circuit_remove_layer) - LAYER_ROLE_NORMAL layers behave like an ordinary
+   routed copper layer (TOP-Signal/BOTTOM-Signal by default, or any
+   user-added one). */
+typedef enum { LAYER_ROLE_NORMAL, LAYER_ROLE_GND, LAYER_ROLE_POWER } LayerRole;
+
+/* 9 to fit cleanly in the 1-9 number-key range used to pick the active
+   routing layer (see input_handler.c) - one keypress always maps to
+   exactly one digit. */
+#define MAX_LAYERS 9
+#define MAX_VIAS 512 /* same scale as MAX_WIRES */
+
+typedef struct {
+    int in_use;
+    char name[24];
+    /* plain RGB, not SDL_Color - circuit.h stays render-agnostic, same
+       reasoning as SignalValue/PinDirection living in types.h rather than
+       anywhere SDL-aware. render.c turns this into an SDL_Color itself. */
+    unsigned char color_r, color_g, color_b;
+    LayerRole role;
+} Layer;
+
+/* A via bridges exactly two specific layers at one grid point - real vias
+   can be blind/buried between a specific layer pair, not automatically
+   "every layer at once". Two wires on different layers whose endpoints
+   touch (exact coincidence or landing mid-span on one another) get an
+   automatic via placed between exactly their two layers (see
+   circuit_add_wire) - manually placing one instead (TOOL_VIA) requires
+   picking the two layers explicitly, since there's no touching wire pair
+   to infer them from. */
+typedef struct {
+    int in_use;
+    int x, y;
+    int layer_slot_a, layer_slot_b;
+} Via;
 
 typedef struct {
     Component components[MAX_COMPONENTS];
@@ -46,12 +89,31 @@ typedef struct {
     int wire_high_water;
     SignalValue wire_values[MAX_WIRES]; /* resolved net value per wire, filled by sim_step */
 
+    Via vias[MAX_VIAS];
+    int via_high_water;
+
+    /* layers[] is a fixed-slot table (like components/wires above) - a
+       layer's slot index is its stable identity, referenced by
+       Wire.layer_slot and Via.layer_slot_a/b, and never reassigned by
+       reordering. layer_order[] holds slot indices in current
+       display/stack order: position i (0-based) is "layer #(i+1)" in the
+       Layers panel and the number-key binding, and position 0 /
+       layer_order_count-1 are the two outer layers component pins bridge
+       to (see circuit_rebuild_nets) - reordering the stack changes both
+       of those without ever touching which wires reference which layer. */
+    Layer layers[MAX_LAYERS];
+    int layer_order[MAX_LAYERS];
+    int layer_order_count;
+
     int pin_net[TOTAL_POINTS]; /* union-find parent array over pins + wire endpoints */
 
     GridPoint junctions[MAX_JUNCTIONS]; /* cached connection points, for rendering only */
     int junction_count;
 } Circuit;
 
+/* Seeds the four default layers (TOP-Signal/yellow, GND/blue, +5V/orange,
+   BOTTOM-Signal/violet, in that stack order) alongside the usual empty
+   circuit. */
 void circuit_init(Circuit *circuit);
 
 int circuit_add_ic(Circuit *circuit, int grid_x, int grid_y, const IC_Def *def);
@@ -62,9 +124,33 @@ void circuit_remove_component(Circuit *circuit, int component_id);
    (see Wire above). If this wire crosses an existing wire's endpoint, or an
    existing wire crosses this one's, both are split into independent segments
    at that point instead of merely tapping into an unbroken run - so every
-   segment stays separately selectable and deletable. */
-int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind);
+   segment stays separately selectable and deletable - but only if the
+   existing wire is on the SAME layer_slot; a different-layer touch instead
+   triggers an automatic via there bridging the two layers (see Via above),
+   never a silent geometric merge. */
+int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot);
 void circuit_remove_wire(Circuit *circuit, int wire_id);
+
+/* Adds a via bridging layer_slot_a/b at (x,y) - no-ops (returns -1) if one
+   already bridges that exact pair there, so circuit_add_wire's auto-via
+   creation can call this unconditionally without double-placing. */
+int circuit_add_via(Circuit *circuit, int x, int y, int layer_slot_a, int layer_slot_b);
+void circuit_remove_via(Circuit *circuit, int via_id);
+int circuit_find_via_at(const Circuit *circuit, int x, int y);
+
+/* Layer management - layer_order_pos is a position in layer_order[]
+   (0-based; "layer #N" in the UI is position N-1), not a raw layers[]
+   slot index. */
+int circuit_add_layer(Circuit *circuit, const char *name, unsigned char r, unsigned char g, unsigned char b);
+/* Returns 0 (and leaves the layer alone) if it's GND/+5V or still has any
+   wire on it, 1 if it was removed. */
+int circuit_remove_layer(Circuit *circuit, int layer_order_pos);
+/* direction: -1 moves it earlier (up), +1 later (down); no-op at either end. */
+void circuit_move_layer(Circuit *circuit, int layer_order_pos, int direction);
+/* True if any in-use wire currently references this layers[] slot - what
+   circuit_remove_layer itself checks, also useful for the panel to grey
+   out a delete control before the user even tries. */
+int circuit_layer_in_use(const Circuit *circuit, int layer_slot);
 
 void circuit_rebuild_nets(Circuit *circuit);
 int circuit_pin_net_root(Circuit *circuit, int component_id, int pin_index);
@@ -86,6 +172,18 @@ int circuit_find_pin_at(const Circuit *circuit, int x, int y, int *out_component
 /* (fx,fy) is the cursor in float grid space (unrounded); tolerance is in grid
    units. Finds the closest wire within tolerance of the point-to-segment distance. */
 int circuit_find_wire_at(const Circuit *circuit, float fx, float fy, float tolerance);
+
+/* Nearest wire endpoint to (fx,fy) within tolerance (grid units), written to
+   out_x/out_y - the "snap to a node" test shared by Select-mode node-
+   dragging and TOOL_VIA's node-snap placement/ghost preview (see
+   input_handler.c/app.c). Returns 0 if none found within tolerance. */
+int circuit_find_wire_node_near(const Circuit *circuit, float fx, float fy, float tolerance, int *out_x, int *out_y);
+
+/* The layer_slot of any in-use wire with an end at exactly (x,y), or -1 if
+   none - used to find a node's own layer for TOOL_VIA (see
+   circuit_find_wire_node_near above). If several wires meet there, any one
+   of them is an equally valid representative of "this node". */
+int circuit_wire_layer_at_point(const Circuit *circuit, int x, int y);
 
 /* True if a component footprint of size (w,h) at (x,y) would overlap an existing
    component (other than ignore_id). Used to keep placements from stacking. */

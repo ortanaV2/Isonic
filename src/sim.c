@@ -57,8 +57,22 @@ static void gather_drivers(Circuit *circuit) {
 
     for (int wi = 0; wi < circuit->wire_high_water; wi++) {
         Wire *w = &circuit->wires[wi];
-        if (!w->in_use || w->kind != WIRE_KIND_INPUT) continue;
-        register_driver(wire_root_cache[wi], w->input_value ? SIG_HIGH : SIG_LOW);
+        if (!w->in_use) continue;
+        if (w->kind == WIRE_KIND_INPUT) {
+            register_driver(wire_root_cache[wi], w->input_value ? SIG_HIGH : SIG_LOW);
+        }
+        /* GND/+5V layers are a forced plane regardless of WireKind - any
+           wire routed there drives LOW/HIGH on its own, no Input wire
+           needed (see LAYER_ROLE_GND/POWER's doc comment in circuit.h).
+           Every such wire is already unioned into one shared net by
+           circuit_rebuild_nets, so registering from each is redundant but
+           harmless - same as several agreeing Input wires today. */
+        LayerRole role = circuit->layers[w->layer_slot].role;
+        if (role == LAYER_ROLE_GND) {
+            register_driver(wire_root_cache[wi], SIG_LOW);
+        } else if (role == LAYER_ROLE_POWER) {
+            register_driver(wire_root_cache[wi], SIG_HIGH);
+        }
     }
 }
 

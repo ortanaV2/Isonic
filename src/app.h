@@ -8,6 +8,7 @@
 #include "taskbar.h"
 #include "diagnostics.h"
 #include "data_editor.h"
+#include "layer_panel.h"
 
 #define MAX_DRAG_ATTACHMENTS 64
 /* Screen-pixel hit-testing tolerance shared by input_handler.c (click/select) and
@@ -69,12 +70,25 @@ typedef struct {
     int drag_attach_wire_end[MAX_DRAG_ATTACHMENTS]; /* 0 = from, 1 = to */
     int drag_attach_count;
 
+    /* Vias behave like a tiny component pinned to a wire node - any via
+       whose point coincides with one of the dragged thing's anchor points
+       at drag-start moves along with it too, same idea as
+       drag_attach_wire_id above but for a via (which has no "end", just
+       one point) - see snapshot_drag_attachments/apply_drag_attachments. */
+    int drag_attach_via_id[MAX_DRAG_ATTACHMENTS];
+    int drag_attach_via_count;
+
     /* DRAG_WIRE_NODE: every wire endpoint exactly at the grabbed point, which
        all move together as "the node" - also temporarily marked .selected so
        they're visibly highlighted for the duration of the drag */
     int drag_node_wire_id[MAX_DRAG_ATTACHMENTS];
     int drag_node_wire_end[MAX_DRAG_ATTACHMENTS];
     int drag_node_count;
+
+    /* any via sitting exactly at the grabbed node moves along with it too -
+       see begin_wire_node_drag/DRAG_WIRE_NODE in input_handler.c */
+    int drag_node_via_id[MAX_DRAG_ATTACHMENTS];
+    int drag_node_via_count;
 
     /* panning the camera with the middle mouse button */
     int panning;
@@ -113,6 +127,24 @@ typedef struct {
 
     /* "Manage Data" EEPROM content editor - see data_editor.h */
     DataEditor data_editor;
+
+    /* Multi-layer routing - see layer_panel.h/circuit.h. active_layer_slot
+       (a circuit->layers[] slot index, not a layer_order[] position) is
+       which layer a newly-drawn wire is placed on; the 1-9 keys and the
+       panel's row clicks both just set this one field. */
+    LayerPanel layer_panel;
+    int active_layer_slot;
+
+    /* Shift-hold previews every wire in its own layer's color instead of
+       the plain gray/green signal color (see render_circuit's
+       layer_preview param); Ctrl+Shift toggles that preview permanently on
+       (CapsLock-like) until Ctrl+Shift again or a lone Shift tap.
+       shift_press_was_chord distinguishes "Shift held as part of a
+       Ctrl+Shift chord" from "a plain Shift tap/hold" so release only
+       un-locks in the latter case - see input_handler.c. */
+    int shift_held;
+    int layer_preview_locked;
+    int shift_press_was_chord;
 } App;
 
 void app_init(App *app, int window_w, int window_h);

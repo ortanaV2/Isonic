@@ -58,6 +58,7 @@ static void clear_wire_node_marks(App *app) {
         app->circuit.wires[app->drag_node_wire_id[i]].selected = 0;
     }
     app->drag_node_count = 0;
+    app->drag_node_via_count = 0;
 }
 
 static void cancel_transient_actions(App *app) {
@@ -185,7 +186,63 @@ static int handle_taskbar_click(App *app, int mx, int my) {
     return kind == TASKBAR_CLICK_CONSUMED;
 }
 
+/* Mirrors handle_taskbar_click's contract: 1 if the click was fully handled
+   by the Layers panel (a rename started, a swatch popup opened, a reorder/
+   delete/add committed, ...), 0 if it missed and the caller should fall
+   through to the canvas. double_click gates starting a rename - a plain
+   click on a name just selects that layer (see layer_panel_handle_click). */
+static int handle_layer_panel_click(App *app, int mx, int my, int double_click) {
+    LayerPanelClickResult result = layer_panel_handle_click(&app->layer_panel, &app->circuit,
+                                                              &app->active_layer_slot, mx, my, double_click);
+    if (result == LAYER_PANEL_CLICK_CHANGED) undo_push(&app->circuit);
+    return result != LAYER_PANEL_CLICK_MISS;
+}
+
+/* Which wire (if any) has an end at exactly (x,y) - used to find that
+   node's own layer for TOOL_VIA placement below. If several wires meet
+   there (same layer, or already via-bridged different layers), any one of
+   them is an equally valid representative of "this node". */
+/* A couple pixels of slack around the exact node point, same idea as
+   TERMINAL_HIT_PADDING_PX below - reuses the existing wire hit tolerance so
+   it stays consistent with wire-body picking. Thin wrapper over
+   circuit_find_wire_node_near, which app.c's TOOL_VIA ghost preview also
+   calls directly (it has no App-specific tolerance logic of its own to
+   share, just the App-bound convenience of not having to compute the
+   tolerance at every call site here). */
+static int find_wire_node_at(App *app, float fx, float fy, int *out_x, int *out_y) {
+    return circuit_find_wire_node_near(&app->circuit, fx, fy, app_wire_hit_tolerance(app), out_x, out_y);
+}
+
+/* TOOL_VIA: a via behaves like a tiny component pinned to a wire's node
+   (endpoint/junction), never a free point - the click has to land on (or
+   snap to, same tolerance as Select-mode node-dragging - see
+   find_wire_node_at) an existing wire end. It then bridges that node's own
+   layer with whichever layer is currently active (the Layers panel's
+   highlighted row) - clicking with the active layer already matching does
+   nothing, there's no such thing as a via bridging a layer to itself. */
+static void handle_via_tool_click(App *app, float fx, float fy) {
+    int node_x, node_y;
+    if (!find_wire_node_at(app, fx, fy, &node_x, &node_y)) return;
+    int wire_layer = circuit_wire_layer_at_point(&app->circuit, node_x, node_y);
+    if (wire_layer < 0 || wire_layer == app->active_layer_slot) return;
+    int new_id = circuit_add_via(&app->circuit, node_x, node_y, wire_layer, app->active_layer_slot);
+    if (new_id >= 0) undo_push(&app->circuit);
+}
+
 static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
+    /* vias sit at exact grid vertices, same lattice-point matching pins
+       use - checked first since a via is the most precise target that
+       could be under the cursor, same precedence node-picking gets over
+       body-picking in Select mode (see handle_left_click) */
+    int gx, gy;
+    camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
+    int via_id = circuit_find_via_at(&app->circuit, gx, gy);
+    if (via_id >= 0) {
+        circuit_remove_via(&app->circuit, via_id);
+        undo_push(&app->circuit);
+        return;
+    }
+
     /* box hit-test needs "which cell is the cursor over", not the nearest
        lattice point - see camera_screen_to_grid_floor */
     int box_gx, box_gy;
@@ -218,7 +275,8 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
    double-move them by the same per-frame delta. */
 static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int anchor_count, int exclude_wire_id) {
     app->drag_attach_count = 0;
-    for (int ai = 0; ai < anchor_count && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; ai++) {
+    app->drag_attach_via_count = 0;
+    for (int ai = 0; ai < anchor_count; ai++) {
         int px = anchors[ai].x, py = anchors[ai].y;
         for (int wi = 0; wi < app->circuit.wire_high_water && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; wi++) {
             if (wi == exclude_wire_id) continue;
@@ -235,6 +293,15 @@ static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int an
                 app->drag_attach_count++;
             }
         }
+        /* a via behaves like a tiny component pinned to this node - it
+           moves along with whatever's being dragged too, same as an
+           attached wire endpoint above */
+        for (int vi = 0; vi < app->circuit.via_high_water && app->drag_attach_via_count < MAX_DRAG_ATTACHMENTS; vi++) {
+            Via *v = &app->circuit.vias[vi];
+            if (!v->in_use || v->x != px || v->y != py) continue;
+            app->drag_attach_via_id[app->drag_attach_via_count] = vi;
+            app->drag_attach_via_count++;
+        }
     }
 }
 
@@ -248,6 +315,11 @@ static void apply_drag_attachments(App *app, int dx, int dy) {
             w->to_x += dx;
             w->to_y += dy;
         }
+    }
+    for (int i = 0; i < app->drag_attach_via_count; i++) {
+        Via *v = &app->circuit.vias[app->drag_attach_via_id[i]];
+        v->x += dx;
+        v->y += dy;
     }
 }
 
@@ -337,26 +409,6 @@ static void begin_selection_drag(App *app, int gx, int gy, int click_component_i
     snapshot_drag_attachments(app, anchors, anchor_count, -1);
 }
 
-/* A couple pixels of slack around the exact node point, same idea as
-   TERMINAL_HIT_PADDING_PX below - reuses the existing wire hit tolerance so
-   it stays consistent with wire-body picking. */
-static int find_wire_node_at(App *app, float fx, float fy, int *out_x, int *out_y) {
-    float tol = app_wire_hit_tolerance(app);
-    float best_d2 = tol * tol;
-    int found = 0;
-    for (int i = 0; i < app->circuit.wire_high_water; i++) {
-        const Wire *w = &app->circuit.wires[i];
-        if (!w->in_use) continue;
-        float dfx = fx - (float)w->from_x, dfy = fy - (float)w->from_y;
-        float d0 = dfx * dfx + dfy * dfy;
-        if (d0 <= best_d2) { best_d2 = d0; *out_x = w->from_x; *out_y = w->from_y; found = 1; }
-        float dtx = fx - (float)w->to_x, dty = fy - (float)w->to_y;
-        float d1 = dtx * dtx + dty * dty;
-        if (d1 <= best_d2) { best_d2 = d1; *out_x = w->to_x; *out_y = w->to_y; found = 1; }
-    }
-    return found;
-}
-
 /* Moving a wire node grabs every wire endpoint exactly coincident with the
    grabbed point and moves them together - so dragging a junction keeps it a
    junction, instead of tearing one wire's end away from the others. They're
@@ -368,6 +420,7 @@ static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int g
     app->drag_last_gy = gy;
     app->drag_moved = 0;
     app->drag_node_count = 0;
+    app->drag_node_via_count = 0;
     Circuit *circuit = &app->circuit;
     for (int wi = 0; wi < circuit->wire_high_water && app->drag_node_count < MAX_DRAG_ATTACHMENTS; wi++) {
         Wire *w = &circuit->wires[wi];
@@ -383,6 +436,14 @@ static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int g
             app->drag_node_wire_end[app->drag_node_count] = 1;
             app->drag_node_count++;
             w->selected = 1;
+        }
+    }
+    /* any via pinned to this exact node moves along with it too */
+    for (int vi = 0; vi < circuit->via_high_water && app->drag_node_via_count < MAX_DRAG_ATTACHMENTS; vi++) {
+        Via *v = &circuit->vias[vi];
+        if (v->in_use && v->x == node_x && v->y == node_y) {
+            app->drag_node_via_id[app->drag_node_via_count] = vi;
+            app->drag_node_via_count++;
         }
     }
 }
@@ -568,12 +629,14 @@ static void finish_wire(App *app, int gx, int gy) {
     app->wiring = 0;
     int new_id;
     if (app->wiring_kind == WIRE_KIND_NORMAL) {
-        new_id = circuit_add_wire(&app->circuit, app->wire_from_gx, app->wire_from_gy, gx, gy, app->wiring_kind);
+        new_id = circuit_add_wire(&app->circuit, app->wire_from_gx, app->wire_from_gy, gx, gy, app->wiring_kind,
+                                   app->active_layer_slot);
     } else {
         /* the H/L terminal renders at the wire's "from" end - Falstad drags
            AWAY from the pin/terminal, so that end is the release point, not
            where you first clicked down */
-        new_id = circuit_add_wire(&app->circuit, gx, gy, app->wire_from_gx, app->wire_from_gy, app->wiring_kind);
+        new_id = circuit_add_wire(&app->circuit, gx, gy, app->wire_from_gx, app->wire_from_gy, app->wiring_kind,
+                                   app->active_layer_slot);
     }
     if (new_id >= 0) undo_push(&app->circuit); /* -1 means from == to - no wire was actually added */
 }
@@ -673,8 +736,10 @@ void app_handle_event(App *app, const SDL_Event *event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (handle_taskbar_click(app, mx, my)) break;
                 if (data_editor_handle_click(&app->data_editor, data_editor_eligible(&app->circuit), mx, my)) break;
+                if (handle_layer_panel_click(app, mx, my, event->button.clicks >= 2)) break;
             } else if (taskbar_covers_point(&app->taskbar, mx, my) ||
-                       data_editor_covers_point(&app->data_editor, mx, my)) {
+                       data_editor_covers_point(&app->data_editor, mx, my) ||
+                       layer_panel_covers_point(&app->layer_panel, mx, my)) {
                 break;
             }
             if (my < TASKBAR_HEIGHT) break; /* an empty gap in the taskbar strip itself */
@@ -683,7 +748,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
             if (event->button.button == SDL_BUTTON_LEFT) {
-                handle_left_click(app, mx, my, gx, gy, fx, fy);
+                if (app->active_tool == TOOL_VIA) handle_via_tool_click(app, fx, fy);
+                else handle_left_click(app, mx, my, gx, gy, fx, fy);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 1;
             } else if (event->button.button == SDL_BUTTON_RIGHT) {
@@ -754,6 +820,11 @@ void app_handle_event(App *app, const SDL_Event *event) {
                                 w->to_y += dy;
                             }
                         }
+                        for (int i = 0; i < app->drag_node_via_count; i++) {
+                            Via *v = &app->circuit.vias[app->drag_node_via_id[i]];
+                            v->x += dx;
+                            v->y += dy;
+                        }
                     } else { /* DRAG_SELECTION */
                         for (int i = 0; i < app->circuit.component_high_water; i++) {
                             Component *c = &app->circuit.components[i];
@@ -779,14 +850,34 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_KEYDOWN: {
             SDL_Scancode sc = event->key.keysym.scancode;
+
+            /* while renaming/adding a layer, the text-input widget owns
+               every key - typing "w"/"v"/a digit must not also switch tools
+               or the active layer out from under the field being edited */
+            if (layer_panel_is_editing(&app->layer_panel)) {
+                LayerPanelClickResult result = layer_panel_handle_key(&app->layer_panel, &app->circuit, sc);
+                if (result == LAYER_PANEL_CLICK_CHANGED) undo_push(&app->circuit);
+                break;
+            }
+
             if (sc == SDL_SCANCODE_DELETE || sc == SDL_SCANCODE_BACKSPACE) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 handle_escape(app);
             } else if (sc == SDL_SCANCODE_W) {
                 set_active_tool(app, TOOL_WIRE);
+            } else if (sc == SDL_SCANCODE_V) {
+                set_active_tool(app, TOOL_VIA);
             } else if (sc == SDL_SCANCODE_SPACE) {
                 set_active_tool(app, TOOL_SELECT);
+            } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
+                /* picks which layer new wires route on - a plain field
+                   assignment, not structural, so no undo_push (see
+                   circuit_add_wire's layer_slot param) */
+                int pos = sc - SDL_SCANCODE_1;
+                if (pos < app->circuit.layer_order_count) {
+                    app->active_layer_slot = app->circuit.layer_order[pos];
+                }
             } else if (sc == SDL_SCANCODE_C && (event->key.keysym.mod & KMOD_CTRL)) {
                 copy_selected_component(app);
             } else if (sc == SDL_SCANCODE_Z && (event->key.keysym.mod & KMOD_CTRL)) {
@@ -794,9 +885,45 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 else perform_undo(app);
             } else if (sc == SDL_SCANCODE_Y && (event->key.keysym.mod & KMOD_CTRL)) {
                 perform_redo(app);
+            } else if ((sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) && !event->key.repeat) {
+                app->shift_held = 1;
+                if (event->key.keysym.mod & KMOD_CTRL) {
+                    /* Ctrl already down - this Shift press is a Ctrl+Shift
+                       chord, toggling the lock on/off (CapsLock-like) */
+                    app->layer_preview_locked = !app->layer_preview_locked;
+                    app->shift_press_was_chord = 1;
+                }
+            } else if ((sc == SDL_SCANCODE_LCTRL || sc == SDL_SCANCODE_RCTRL) && !event->key.repeat) {
+                if (app->shift_held && !app->shift_press_was_chord) {
+                    /* Shift was already down when Ctrl arrived - same chord,
+                       just pressed in the other order */
+                    app->layer_preview_locked = !app->layer_preview_locked;
+                    app->shift_press_was_chord = 1;
+                }
             }
             break;
         }
+
+        case SDL_KEYUP: {
+            SDL_Scancode sc = event->key.keysym.scancode;
+            if (sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) {
+                app->shift_held = 0;
+                /* a lone Shift tap/hold (never chorded with Ctrl) toggles
+                   an active lock back off on release; a chorded release
+                   leaves the lock as Ctrl+Shift set it */
+                if (!app->shift_press_was_chord && app->layer_preview_locked) {
+                    app->layer_preview_locked = 0;
+                }
+                app->shift_press_was_chord = 0;
+            }
+            break;
+        }
+
+        case SDL_TEXTINPUT:
+            if (layer_panel_is_editing(&app->layer_panel)) {
+                layer_panel_text_input(&app->layer_panel, event->text.text);
+            }
+            break;
 
         default:
             break;

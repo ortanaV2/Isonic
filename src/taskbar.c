@@ -6,6 +6,7 @@
 static const char *k_labels[TOOL_COUNT] = {
     "Select",
     "Wire",
+    "Via",
     "Input",
     "Output",
     "Components",
@@ -167,6 +168,23 @@ static void draw_wire_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Colo
     icon_fill_circle(renderer, p3.x, p3.y, box->w * 0.13f, col);
 }
 
+/* Via: a plain ring - same annulus silhouette render_vias uses on the
+   canvas, drawn as a closed loop of thick line segments (rather than a
+   filled disc with a punched hole) so it doesn't need to know the button's
+   current background color to look right whether hovered/active or not. */
+static void draw_via_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Color col) {
+    SDL_FPoint center = icon_pt(box, 0.5f, 0.5f);
+    float radius = box->w * 0.32f;
+    float thick = box->w * 0.16f;
+    const int segs = ICON_CIRCLE_SEGMENTS;
+    for (int i = 0; i < segs; i++) {
+        float a0 = (float)i / segs * 6.28318530718f;
+        float a1 = (float)(i + 1) / segs * 6.28318530718f;
+        icon_fill_thick_line(renderer, center.x + cosf(a0) * radius, center.y + sinf(a0) * radius,
+                              center.x + cosf(a1) * radius, center.y + sinf(a1) * radius, thick, col);
+    }
+}
+
 /* Shared "door" for Input/Output - the classic log-in/log-out pictogram: an
    open bracket (no left edge) on the right side of the icon. Only the arrow
    differs between the two icons; the door itself is identical. */
@@ -219,6 +237,7 @@ static void draw_tool_icon(SDL_Renderer *renderer, Tool tool, const SDL_Rect *bo
     switch (tool) {
         case TOOL_SELECT: draw_select_icon(renderer, box, col); break;
         case TOOL_WIRE:   draw_wire_icon(renderer, box, col); break;
+        case TOOL_VIA:    draw_via_icon(renderer, box, col); break;
         case TOOL_INPUT:  draw_input_icon(renderer, box, col); break;
         case TOOL_OUTPUT: draw_output_icon(renderer, box, col); break;
         default: break;

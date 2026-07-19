@@ -18,9 +18,13 @@ void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int wi
    mouse-hover highlight active in any tool (slot "a" only, see app.c). A
    wire that is selected or highlighted also gets its own two endpoints marked.
    diagnostics (may be NULL) colors any other wire red/yellow per the worst
-   diagnostic that references it - selection/hover still wins over that. */
+   diagnostic that references it - selection/hover still wins over that.
+   layer_preview, when true, colors any remaining wire by its own layer's
+   color instead of the plain gray/green signal color (see App's
+   shift_held/layer_preview_locked in app.h) - vias are always drawn
+   regardless of layer_preview. */
 void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit *circuit, const Camera *cam,
-                     const DiagnosticSet *diagnostics,
+                     const DiagnosticSet *diagnostics, int layer_preview,
                      int highlight_component_a, int highlight_wire_a,
                      int highlight_component_b, int highlight_wire_b);
 
@@ -29,6 +33,14 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
 
 /* Ghost footprint shown while a placement tool is active, following the cursor. */
 void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx, int gy, int w, int h, int valid);
+
+/* Ghost preview shown while TOOL_VIA is active and the cursor is snapped to
+   an existing wire node (see circuit_find_wire_node_near) - same role as
+   render_placement_preview above, but for a single point instead of a
+   footprint. valid is false when the node's own layer already matches the
+   active layer (placing a via there would be a no-op, colored like
+   render_placement_preview's own invalid case). */
+void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int x, int y, int valid);
 
 /* Rubber-band selection box, shown while a Select-mode marquee drag is in
    progress (see app->marquee_active). Screen-space corners, any order. */
@@ -65,5 +77,11 @@ int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_
    to stay on screen. */
 void render_diagnostic_tooltip(SDL_Renderer *renderer, TTF_Font *font, const Diagnostic *diag,
                                 int anchor_x, int anchor_y, int window_w, int window_h);
+
+/* Small "LayerA <-> LayerB" tooltip shown while hovering a via - same
+   anchor/flip/clamp behavior as render_diagnostic_tooltip, but a single
+   plain line instead of word-wrapped diagnostic detail text. */
+void render_via_tooltip(SDL_Renderer *renderer, TTF_Font *font, const char *layer_a_name, const char *layer_b_name,
+                         int anchor_x, int anchor_y, int window_w, int window_h);
 
 #endif

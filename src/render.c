@@ -28,6 +28,11 @@ static const SDL_Color DIAG_WARNING_COLOR = { 235, 190, 40, 255 };
    colors (red reading coral-ish, amber reading orange-ish). */
 static const SDL_Color DIAG_PANEL_ERROR_COLOR = { 220, 65, 60, 255 };
 static const SDL_Color DIAG_PANEL_WARNING_COLOR = { 235, 175, 45, 255 };
+static const SDL_Color VIA_RING_COLOR = { 220, 220, 225, 255 };
+/* Must match app.c's SDL_RenderClear color - render_vias punches its ring's
+   hole with a same-color circle, the simplest way to get an annulus out of
+   the plain filled-circle helper everything else here already uses. */
+static const SDL_Color CANVAS_BG_COLOR = { 24, 24, 28, 255 };
 
 /* Thickness as a fraction of the current grid cell size, not a flat pixel
    count, so wires/stubs/borders stay proportionally the same thickness
@@ -288,6 +293,32 @@ void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx,
     SDL_RenderDrawRect(renderer, &r);
 }
 
+void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int x, int y, int valid) {
+    /* pure proportional scaling, same as render_junctions' plain
+       connection_dot_radius_px(cell) - no minimum-size floor here, only
+       draw_filled_circle's own 1px floor as the actual safety net (see its
+       comment), so a via never grows relatively bigger than a junction dot
+       as you zoom out. */
+    float outer_r = connection_dot_radius_px(camera_cell_px(cam)) * 1.6f;
+    float inner_r = outer_r * 0.5f;
+    int sx, sy;
+    camera_grid_to_screen(cam, x, y, &sx, &sy);
+
+    SDL_Color ring = valid ? VIA_RING_COLOR : DIAG_ERROR_COLOR;
+    SDL_SetRenderDrawColor(renderer, ring.r, ring.g, ring.b, 150);
+    draw_filled_circle(renderer, sx, sy, outer_r);
+    /* see render_vias' matching comment - fades out smoothly instead of a
+       hard cutoff */
+    float hole_fade = (inner_r - 1.0f) / 1.0f;
+    if (hole_fade < 0.0f) hole_fade = 0.0f;
+    if (hole_fade > 1.0f) hole_fade = 1.0f;
+    int hole_alpha = (int)(hole_fade * 150.0f);
+    if (hole_alpha > 0) {
+        SDL_SetRenderDrawColor(renderer, CANVAS_BG_COLOR.r, CANVAS_BG_COLOR.g, CANVAS_BG_COLOR.b, hole_alpha);
+        draw_filled_circle(renderer, sx, sy, inner_r);
+    }
+}
+
 void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y1) {
     SDL_Rect r = {
         x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1,
@@ -319,15 +350,24 @@ static int wire_diag_color(const DiagnosticSet *diagnostics, int wire_id, SDL_Co
    afterwards can never slice back through an already-placed dot. Color
    priority: selection/hover always wins (so a flagged wire you're pointing
    at or have selected reads as blue, not red/yellow), then any diagnostic
-   flagging this wire, then its plain signal color. */
-static void render_wire_line(SDL_Renderer *renderer, const Camera *cam, const Wire *w, int wire_id,
-                              SignalValue value, int highlighted, const DiagnosticSet *diagnostics) {
+   flagging this wire, then - while layer_preview is active (Shift held or
+   locked, see app.h) - that wire's own layer color, otherwise its plain
+   gray/green signal color. */
+static void render_wire_line(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Wire *w,
+                              int wire_id, SignalValue value, int highlighted, const DiagnosticSet *diagnostics,
+                              int layer_preview) {
     SDL_Color color;
     SDL_Color diag_color;
     if (w->selected || highlighted) {
         color = SELECTION_COLOR;
     } else if (wire_diag_color(diagnostics, wire_id, &diag_color)) {
         color = diag_color;
+    } else if (layer_preview) {
+        const Layer *l = &circuit->layers[w->layer_slot];
+        color.r = l->color_r;
+        color.g = l->color_g;
+        color.b = l->color_b;
+        color.a = 255;
     } else {
         color = signal_color(value);
     }
@@ -371,6 +411,47 @@ static void render_junctions(SDL_Renderer *renderer, const Camera *cam, const Ci
         int sx, sy;
         camera_grid_to_screen(cam, circuit->junctions[i].x, circuit->junctions[i].y, &sx, &sy);
         draw_filled_circle(renderer, sx, sy, r);
+    }
+}
+
+/* A via is drawn as an annulus (filled ring) - visually distinct from a
+   plain connection dot, since it means something electrically special
+   (bridges two specific layers here, see Via's doc comment in circuit.h)
+   rather than just "a wire ends/junctions here". Punched via a second,
+   smaller circle in the canvas's own background color rather than true
+   ring geometry - simplest way to get a ring shape out of the same
+   draw_filled_circle helper everything else here already uses. */
+static void render_vias(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit) {
+    /* pure proportional scaling, same as render_junctions' plain
+       connection_dot_radius_px(cell) - no minimum-size floor here, only
+       draw_filled_circle's own 1px floor as the actual safety net (see its
+       comment), so a via never grows relatively bigger than a junction dot
+       as you zoom out. */
+    float outer_r = connection_dot_radius_px(camera_cell_px(cam)) * 1.6f;
+    float inner_r = outer_r * 0.5f;
+    /* below inner_r == 1px, draw_filled_circle's own floor would clamp it up
+       to (or past) outer_r, painting the "hole" fully over the ring instead
+       of merely shrinking it. Rather than a hard on/off switch (which made
+       the hole visibly pop in/out at one exact zoom level), fade its alpha
+       out smoothly over the last 1px of shrinkage, so it's already fully
+       transparent well before the floor would otherwise make it collide
+       with the ring - a continuous shrink-to-nothing instead of a snap. */
+    float hole_fade = (inner_r - 1.0f) / 1.0f;
+    if (hole_fade < 0.0f) hole_fade = 0.0f;
+    if (hole_fade > 1.0f) hole_fade = 1.0f;
+    int hole_alpha = (int)(hole_fade * 255.0f);
+
+    for (int i = 0; i < circuit->via_high_water; i++) {
+        const Via *v = &circuit->vias[i];
+        if (!v->in_use) continue;
+        int sx, sy;
+        camera_grid_to_screen(cam, v->x, v->y, &sx, &sy);
+        SDL_SetRenderDrawColor(renderer, VIA_RING_COLOR.r, VIA_RING_COLOR.g, VIA_RING_COLOR.b, 255);
+        draw_filled_circle(renderer, sx, sy, outer_r);
+        if (hole_alpha > 0) {
+            SDL_SetRenderDrawColor(renderer, CANVAS_BG_COLOR.r, CANVAS_BG_COLOR.g, CANVAS_BG_COLOR.b, hole_alpha);
+            draw_filled_circle(renderer, sx, sy, inner_r);
+        }
     }
 }
 
@@ -588,7 +669,7 @@ static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam,
 }
 
 void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit *circuit, const Camera *cam,
-                     const DiagnosticSet *diagnostics,
+                     const DiagnosticSet *diagnostics, int layer_preview,
                      int highlight_component_a, int highlight_wire_a,
                      int highlight_component_b, int highlight_wire_b) {
     /* pass 1: lines, terminals and component bodies */
@@ -596,7 +677,7 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         const Wire *w = &circuit->wires[i];
         if (!w->in_use) continue;
         int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
-        render_wire_line(renderer, cam, w, i, circuit->wire_values[i], highlighted, diagnostics);
+        render_wire_line(renderer, cam, circuit, w, i, circuit->wire_values[i], highlighted, diagnostics, layer_preview);
     }
     for (int i = 0; i < circuit->wire_high_water; i++) {
         const Wire *w = &circuit->wires[i];
@@ -621,6 +702,7 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         if (c->in_use) render_component_pin_dots(renderer, cam, circuit, c);
     }
     render_junctions(renderer, cam, circuit);
+    render_vias(renderer, cam, circuit);
 
     for (int i = 0; i < circuit->wire_high_water; i++) {
         const Wire *w = &circuit->wires[i];
@@ -770,4 +852,33 @@ void render_diagnostic_tooltip(SDL_Renderer *renderer, TTF_Font *font, const Dia
 
     SDL_Color text_col = { 230, 230, 235, 255 };
     wrap_text(renderer, font, diag->detail, box_x + DIAG_TOOLTIP_PAD, box_y + DIAG_TOOLTIP_PAD, DIAG_TOOLTIP_MAX_W, &text_col);
+}
+
+void render_via_tooltip(SDL_Renderer *renderer, TTF_Font *font, const char *layer_a_name, const char *layer_b_name,
+                         int anchor_x, int anchor_y, int window_w, int window_h) {
+    if (font == NULL) return;
+    char text[64];
+    snprintf(text, sizeof(text), "%s <-> %s", layer_a_name, layer_b_name);
+    int text_w, text_h;
+    text_util_measure(font, text, &text_w, &text_h);
+    if (text_w <= 0) return;
+
+    int box_w = text_w + DIAG_TOOLTIP_PAD * 2;
+    int box_h = text_h + DIAG_TOOLTIP_PAD * 2;
+
+    int box_x = anchor_x;
+    int box_y = anchor_y - box_h - 6; /* default: just above the anchor */
+    if (box_y < 0) box_y = anchor_y + 24;       /* not enough room above - flip below instead */
+    if (box_x + box_w > window_w) box_x = window_w - box_w - 4;
+    if (box_x < 0) box_x = 4;
+    if (box_y + box_h > window_h) box_y = window_h - box_h - 4;
+
+    SDL_Rect box = { box_x, box_y, box_w, box_h };
+    SDL_SetRenderDrawColor(renderer, 25, 25, 28, 240);
+    SDL_RenderFillRect(renderer, &box);
+    SDL_SetRenderDrawColor(renderer, VIA_RING_COLOR.r, VIA_RING_COLOR.g, VIA_RING_COLOR.b, 255);
+    SDL_RenderDrawRect(renderer, &box);
+
+    SDL_Color text_col = { 230, 230, 235, 255 };
+    text_util_draw(renderer, font, text, box_x + DIAG_TOOLTIP_PAD, box_y + DIAG_TOOLTIP_PAD, text_col);
 }

@@ -13,6 +13,7 @@
 typedef enum {
     TOOL_SELECT,
     TOOL_WIRE,
+    TOOL_VIA,   /* manually bridges two specific layers at a point - see circuit_add_via */
     TOOL_INPUT,
     TOOL_OUTPUT,
     TOOL_PLACE_IC,

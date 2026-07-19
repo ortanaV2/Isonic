@@ -31,7 +31,9 @@ void app_init(App *app, int window_w, int window_h) {
     app->drag_last_gy = 0;
     app->drag_wire_id = -1;
     app->drag_attach_count = 0;
+    app->drag_attach_via_count = 0;
     app->drag_node_count = 0;
+    app->drag_node_via_count = 0;
 
     app->panning = 0;
 
@@ -54,6 +56,12 @@ void app_init(App *app, int window_w, int window_h) {
     app->diagnostics.count = 0;
 
     data_editor_init(&app->data_editor);
+
+    layer_panel_init(&app->layer_panel);
+    app->active_layer_slot = app->circuit.layer_order[0];
+    app->shift_held = 0;
+    app->layer_preview_locked = 0;
+    app->shift_press_was_chord = 0;
 
     /* baseline snapshot so the very first structural edit has something to
        undo back to (the empty starting circuit) - see undo.h */
@@ -164,6 +172,17 @@ static int find_diagnostic_hover_at(App *app, int mx, int my) {
     return -1;
 }
 
+/* Which via (if any) sits exactly under the cursor - vias always sit at
+   exact grid vertices, same lattice-point matching circuit_find_pin_at
+   uses, not the floored-cell/tolerance matching hover/wire-body hit-tests
+   use elsewhere. */
+static int find_via_hover_at(App *app, int mx, int my) {
+    if (my < TASKBAR_HEIGHT) return -1;
+    int gx, gy;
+    camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
+    return circuit_find_via_at(&app->circuit, gx, gy);
+}
+
 void app_render(App *app, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
     SDL_RenderClear(renderer);
@@ -191,7 +210,8 @@ void app_render(App *app, SDL_Renderer *renderer) {
     }
 
     render_grid(renderer, &app->camera, app->window_w, app->window_h);
-    render_circuit(renderer, app->font_large, &app->circuit, &app->camera, &app->diagnostics,
+    int layer_preview = app->shift_held || app->layer_preview_locked;
+    render_circuit(renderer, app->font_large, &app->circuit, &app->camera, &app->diagnostics, layer_preview,
                     snap_component_a, snap_wire_a, snap_component_b, snap_wire_b);
     render_diagnostic_highlights(renderer, &app->camera, &app->circuit, &app->diagnostics);
 
@@ -218,6 +238,23 @@ void app_render(App *app, SDL_Renderer *renderer) {
         }
     }
 
+    if (app->active_tool == TOOL_VIA) {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        if (my >= TASKBAR_HEIGHT && !taskbar_covers_point(&app->taskbar, mx, my) &&
+            !data_editor_covers_point(&app->data_editor, mx, my) &&
+            !layer_panel_covers_point(&app->layer_panel, mx, my)) {
+            float fx, fy;
+            camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
+            int node_x, node_y;
+            if (circuit_find_wire_node_near(&app->circuit, fx, fy, app_wire_hit_tolerance(app), &node_x, &node_y)) {
+                int wire_layer = circuit_wire_layer_at_point(&app->circuit, node_x, node_y);
+                int valid = (wire_layer >= 0 && wire_layer != app->active_layer_slot);
+                render_via_placement_preview(renderer, &app->camera, node_x, node_y, valid);
+            }
+        }
+    }
+
     if (app->marquee_active) {
         render_marquee_select(renderer, app->marquee_start_mx, app->marquee_start_my,
                                app->marquee_cur_mx, app->marquee_cur_my);
@@ -237,6 +274,12 @@ void app_render(App *app, SDL_Renderer *renderer) {
     data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,
                         app->window_w, app->window_h, hover_mx, hover_my);
 
+    /* slides left to sit beside the Manage Data panel instead of
+       overlapping it, when that's open */
+    int layer_panel_right_margin = app->data_editor.open ? app->data_editor.panel_rect.w : 0;
+    layer_panel_render(renderer, app->font, &app->layer_panel, &app->circuit, app->active_layer_slot,
+                        app->window_w, layer_panel_right_margin, hover_mx, hover_my);
+
     /* the bottom-left chip stack always renders on top of everything else;
        a hovered chip wins over a hovered canvas target if somehow both are
        true at once (they never overlap in practice - the panel sits over
@@ -246,5 +289,13 @@ void app_render(App *app, SDL_Renderer *renderer) {
     if (hovered_diag >= 0) {
         render_diagnostic_tooltip(renderer, app->font, &app->diagnostics.items[hovered_diag],
                                    hover_mx, hover_my, app->window_w, app->window_h);
+    } else {
+        int hovered_via = find_via_hover_at(app, hover_mx, hover_my);
+        if (hovered_via >= 0) {
+            const Via *v = &app->circuit.vias[hovered_via];
+            render_via_tooltip(renderer, app->font, app->circuit.layers[v->layer_slot_a].name,
+                                app->circuit.layers[v->layer_slot_b].name, hover_mx, hover_my,
+                                app->window_w, app->window_h);
+        }
     }
 }
