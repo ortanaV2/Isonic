@@ -107,6 +107,32 @@ static void enable_dark_titlebar(SDL_Window *window) {
     SetWindowPos(hwnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
+
+/* Loads the same icon.ico already embedded in the exe (see assets/app.rc,
+   resource ID 1) and assigns it to the live window via WM_SETICON - so the
+   titlebar/Alt-Tab/taskbar icon while running matches the exe's own file
+   icon, from a single source file instead of needing a second copy loaded
+   through SDL (which has no ICO loader without the SDL2_image dependency
+   anyway). Requested at each icon's own system-metric size (SM_CXSMICON for
+   the small titlebar icon, SM_CXICON for the large Alt-Tab one) so Windows
+   picks the closest matching resolution baked into the .ico instead of
+   stretching a single fixed size. */
+static void set_window_icon(SDL_Window *window) {
+    SDL_SysWMinfo wmi;
+    SDL_VERSION(&wmi.version);
+    if (!SDL_GetWindowWMInfo(window, &wmi)) return;
+    HWND hwnd = wmi.info.win.window;
+    HINSTANCE inst = GetModuleHandleW(NULL);
+
+    HICON small_icon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                          GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+                                          LR_DEFAULTCOLOR);
+    HICON big_icon = (HICON)LoadImageW(inst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON),
+                                        LR_DEFAULTCOLOR);
+    if (small_icon != NULL) SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)small_icon);
+    if (big_icon != NULL) SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)big_icon);
+}
 #endif
 
 int main(int argc, char **argv) {
@@ -125,7 +151,7 @@ int main(int argc, char **argv) {
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
 
     SDL_Window *window = SDL_CreateWindow(
-        "Isonic",
+        "Isonic Developer x64",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         WINDOW_W, WINDOW_H,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
@@ -151,6 +177,7 @@ int main(int argc, char **argv) {
        the window's styles/theme, which was stomping the dark non-client
        theming when this ran before it. */
     enable_dark_titlebar(window);
+    set_window_icon(window);
 #endif
 
     ic_cd4555_register();
