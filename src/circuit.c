@@ -271,11 +271,20 @@ void circuit_rebuild_nets(Circuit *circuit) {
         k = j;
     }
 
+    /* Pin-tip-lands-on-a-wire's-interior is still detected generically here
+       (e.g. placing/dragging a component so a pin taps into an existing
+       wire), but a WIRE endpoint landing on another wire's interior is
+       deliberately NOT - that's restricted to poi[m].uf_idx < MAX_GLOBAL_PINS
+       (pins only) below. Wire-to-wire mid-span taps are only ever created by
+       an explicit new-wire draw (circuit_add_wire pre-splits both wires
+       itself, before either even reaches this function - see
+       split_wires_containing_point/insert_wire_chain above), never as a
+       side effect of merely dragging an existing wire across another one. */
     for (int i = 0; i < circuit->wire_high_water; i++) {
         Wire *w = &circuit->wires[i];
         if (!w->in_use) continue;
         for (int m = 0; m < poi_count; m++) {
-            if (poi[m].uf_idx == WIRE_POINT_ID(i, 0) || poi[m].uf_idx == WIRE_POINT_ID(i, 1)) continue;
+            if (poi[m].uf_idx >= MAX_GLOBAL_PINS) continue;
             if (point_on_segment_interior(poi[m].x, poi[m].y, w->from_x, w->from_y, w->to_x, w->to_y)) {
                 uf_union(circuit, poi[m].uf_idx, WIRE_POINT_ID(i, 0));
                 add_junction(circuit, poi[m].x, poi[m].y);
