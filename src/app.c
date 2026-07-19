@@ -4,6 +4,7 @@
 #include "text_util.h"
 #include "ic_registry.h"
 #include "diagnostics.h"
+#include "undo.h"
 
 void app_init(App *app, int window_w, int window_h) {
     circuit_init(&app->circuit);
@@ -53,6 +54,11 @@ void app_init(App *app, int window_w, int window_h) {
     app->diagnostics.count = 0;
 
     data_editor_init(&app->data_editor);
+
+    /* baseline snapshot so the very first structural edit has something to
+       undo back to (the empty starting circuit) - see undo.h */
+    undo_init();
+    undo_push(&app->circuit);
 }
 
 void app_shutdown(App *app) {

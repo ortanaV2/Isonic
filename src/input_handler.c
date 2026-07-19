@@ -1,5 +1,6 @@
 #include "app.h"
 #include "render.h"
+#include "undo.h"
 
 /* Clears every .selected flag in the circuit, not just the tracked single
    ids - a marquee selection (see finish_marquee_select) can mark several
@@ -31,18 +32,22 @@ static void select_wire(App *app, int id) {
 /* Removes every selected component/wire, not just the single tracked ids -
    a marquee selection can mark several at once (see clear_selection above). */
 static void delete_selection(App *app) {
+    int removed = 0;
     for (int i = 0; i < app->circuit.component_high_water; i++) {
         if (app->circuit.components[i].in_use && app->circuit.components[i].selected) {
             circuit_remove_component(&app->circuit, i);
+            removed = 1;
         }
     }
     for (int i = 0; i < app->circuit.wire_high_water; i++) {
         if (app->circuit.wires[i].in_use && app->circuit.wires[i].selected) {
             circuit_remove_wire(&app->circuit, i);
+            removed = 1;
         }
     }
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
+    if (removed) undo_push(&app->circuit);
 }
 
 /* Unmarks the wires temporarily highlighted for a DRAG_WIRE_NODE (see
@@ -189,12 +194,14 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
     if (comp_id >= 0) {
         if (comp_id == app->selected_component_id) app->selected_component_id = -1;
         circuit_remove_component(&app->circuit, comp_id);
+        undo_push(&app->circuit);
         return;
     }
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         if (wire_id == app->selected_wire_id) app->selected_wire_id = -1;
         circuit_remove_wire(&app->circuit, wire_id);
+        undo_push(&app->circuit);
     }
 }
 
@@ -249,6 +256,7 @@ static void begin_component_drag(App *app, int comp_id, int gx, int gy) {
     app->drag_kind = DRAG_COMPONENT;
     app->drag_last_gx = gx;
     app->drag_last_gy = gy;
+    app->drag_moved = 0;
     Component *c = &app->circuit.components[comp_id];
     GridPoint anchors[MAX_PINS_PER_COMPONENT];
     for (int pi = 0; pi < c->pin_count; pi++) {
@@ -266,6 +274,7 @@ static void begin_wire_body_drag(App *app, int wire_id, int gx, int gy) {
     app->drag_wire_id = wire_id;
     app->drag_last_gx = gx;
     app->drag_last_gy = gy;
+    app->drag_moved = 0;
     Wire *w = &app->circuit.wires[wire_id];
     GridPoint anchors[2] = { { w->from_x, w->from_y }, { w->to_x, w->to_y } };
     snapshot_drag_attachments(app, anchors, 2, wire_id);
@@ -357,6 +366,7 @@ static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int g
     app->drag_kind = DRAG_WIRE_NODE;
     app->drag_last_gx = gx;
     app->drag_last_gy = gy;
+    app->drag_moved = 0;
     app->drag_node_count = 0;
     Circuit *circuit = &app->circuit;
     for (int wi = 0; wi < circuit->wire_high_water && app->drag_node_count < MAX_DRAG_ATTACHMENTS; wi++) {
@@ -495,7 +505,10 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         ic_dip_body_size(place_def->pin_count, &w, &h);
         if (!circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
             int new_id = circuit_add_ic(&app->circuit, gx, gy, place_def);
-            if (new_id >= 0) select_component(app, new_id);
+            if (new_id >= 0) {
+                select_component(app, new_id);
+                undo_push(&app->circuit);
+            }
         }
         return;
     }
@@ -553,14 +566,16 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
 
 static void finish_wire(App *app, int gx, int gy) {
     app->wiring = 0;
+    int new_id;
     if (app->wiring_kind == WIRE_KIND_NORMAL) {
-        circuit_add_wire(&app->circuit, app->wire_from_gx, app->wire_from_gy, gx, gy, app->wiring_kind);
+        new_id = circuit_add_wire(&app->circuit, app->wire_from_gx, app->wire_from_gy, gx, gy, app->wiring_kind);
     } else {
         /* the H/L terminal renders at the wire's "from" end - Falstad drags
            AWAY from the pin/terminal, so that end is the release point, not
            where you first clicked down */
-        circuit_add_wire(&app->circuit, gx, gy, app->wire_from_gx, app->wire_from_gy, app->wiring_kind);
+        new_id = circuit_add_wire(&app->circuit, gx, gy, app->wire_from_gx, app->wire_from_gy, app->wiring_kind);
     }
+    if (new_id >= 0) undo_push(&app->circuit); /* -1 means from == to - no wire was actually added */
 }
 
 static void finish_drag(App *app) {
@@ -573,9 +588,39 @@ static void finish_drag(App *app) {
         if (app->drag_click_component_id >= 0) select_component(app, app->drag_click_component_id);
         else if (app->drag_click_wire_id >= 0) select_wire(app, app->drag_click_wire_id);
     }
+    if (app->drag_moved) undo_push(&app->circuit);
     clear_wire_node_marks(app);
     app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
+}
+
+/* A drag in progress (drag_wire_id, drag_attach_wire_id[], drag_node_wire_id[],
+   selected_component_id, ...) holds indices into the CURRENT circuit -
+   restoring a whole different Circuit snapshot underneath it could leave
+   those pointing at an unrelated component/wire, or nothing at all, in the
+   new one. Only cancels the drag itself (not wiring/marquee/paste/the
+   active tool - those hold plain grid/screen coordinates or static
+   registry pointers, nothing circuit-specific, so there's nothing unsafe
+   about leaving them running through an undo/redo). Deliberately doesn't
+   call undo_push - cancelling isn't itself an edit. */
+static void cancel_drag_for_circuit_swap(App *app) {
+    clear_wire_node_marks(app);
+    app->drag_kind = DRAG_NONE;
+    app->drag_attach_count = 0;
+}
+
+static void perform_undo(App *app) {
+    cancel_drag_for_circuit_swap(app);
+    if (!undo_undo(&app->circuit)) return;
+    app->selected_component_id = -1;
+    app->selected_wire_id = -1;
+}
+
+static void perform_redo(App *app) {
+    cancel_drag_for_circuit_swap(app);
+    if (!undo_redo(&app->circuit)) return;
+    app->selected_component_id = -1;
+    app->selected_wire_id = -1;
 }
 
 void app_handle_event(App *app, const SDL_Event *event) {
@@ -604,6 +649,19 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_MOUSEBUTTONDOWN: {
             int mx = event->button.x, my = event->button.y;
+            /* mouse "back"/"forward" side buttons (X1/X2 - e.g. a Razer
+               DeathAdder's two thumb buttons) act as undo/redo globally,
+               same as the keyboard shortcuts - not gated by taskbar/panel
+               bounds like a left click is, since there's no "click through
+               to the canvas" fallback meaning for these buttons anyway. */
+            if (event->button.button == SDL_BUTTON_X1) {
+                perform_undo(app);
+                break;
+            }
+            if (event->button.button == SDL_BUTTON_X2) {
+                perform_redo(app);
+                break;
+            }
             /* the Components dropdown can extend below TASKBAR_HEIGHT while
                open, so a plain y-cutoff isn't enough to gate taskbar clicks
                anymore - left clicks always go through the taskbar first
@@ -731,6 +789,11 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 set_active_tool(app, TOOL_SELECT);
             } else if (sc == SDL_SCANCODE_C && (event->key.keysym.mod & KMOD_CTRL)) {
                 copy_selected_component(app);
+            } else if (sc == SDL_SCANCODE_Z && (event->key.keysym.mod & KMOD_CTRL)) {
+                if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+Z */
+                else perform_undo(app);
+            } else if (sc == SDL_SCANCODE_Y && (event->key.keysym.mod & KMOD_CTRL)) {
+                perform_redo(app);
             }
             break;
         }
