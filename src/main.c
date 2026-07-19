@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#ifdef _WIN32
+#include <SDL2/SDL_syswm.h>
+#include <windows.h>
+#include <dwmapi.h>
+#include <uxtheme.h>
+#endif
 #include "app.h"
 #include "ic_registry.h"
 #include "ics/cd4555.h"
@@ -32,6 +38,76 @@ static SDL_Texture *create_scene_target(SDL_Renderer *renderer, int window_w, in
     return SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
                               window_w * SSAA_SCALE, window_h * SSAA_SCALE);
 }
+
+#ifdef _WIN32
+/* Windows draws its own title bar (drag, Aero Snap, min/max/close) - this
+   just asks DWM to paint that native chrome dark instead of replacing it
+   with a custom one, so window management keeps working exactly as before.
+   20 is DWMWA_USE_IMMERSIVE_DARK_MODE on Windows 10 20H1+/11; older headers
+   that only know the pre-20H1 attribute number (19) get a fallback attempt
+   in case the newer one is rejected on an older Windows 10 build. */
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
+/* DwmSetWindowAttribute alone is unreliable on plain Windows 10 (partial/
+   delayed repaints, exactly what was seen without this) unless the app also
+   tells uxtheme.dll it's dark-mode-aware first. That's only exposed as
+   undocumented ordinal exports (no header, no import lib entries by name),
+   so they're resolved manually via GetProcAddress - the same approach every
+   other dark-titlebar-on-Win10 implementation (Windows Terminal, VSCode,
+   etc.) uses, since Microsoft has never published a public API for it. */
+typedef enum { APPMODE_DEFAULT, APPMODE_ALLOWDARK, APPMODE_FORCEDARK, APPMODE_FORCELIGHT, APPMODE_MAX } PreferredAppMode;
+typedef PreferredAppMode(WINAPI *SetPreferredAppModeFn)(PreferredAppMode);
+typedef BOOL(WINAPI *AllowDarkModeForWindowFn)(HWND, BOOL);
+typedef void(WINAPI *RefreshImmersiveColorPolicyStateFn)(void);
+
+static void enable_dark_titlebar(SDL_Window *window) {
+    SDL_SysWMinfo wmi;
+    SDL_VERSION(&wmi.version);
+    if (!SDL_GetWindowWMInfo(window, &wmi)) return;
+    HWND hwnd = wmi.info.win.window;
+
+    HMODULE uxtheme = LoadLibraryExW(L"uxtheme.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (uxtheme != NULL) {
+        /* GetProcAddress returns FARPROC - casting straight to a differently-
+           shaped function pointer trips -Wcast-function-type under -Wextra,
+           so go through void* first, same as any other function-pointer cast
+           between incompatible signatures. */
+        SetPreferredAppModeFn SetPreferredAppMode_ =
+            (SetPreferredAppModeFn)(void *)GetProcAddress(uxtheme, MAKEINTRESOURCEA(135));
+        AllowDarkModeForWindowFn AllowDarkModeForWindow_ =
+            (AllowDarkModeForWindowFn)(void *)GetProcAddress(uxtheme, MAKEINTRESOURCEA(133));
+        RefreshImmersiveColorPolicyStateFn RefreshImmersiveColorPolicyState_ =
+            (RefreshImmersiveColorPolicyStateFn)(void *)GetProcAddress(uxtheme, MAKEINTRESOURCEA(104));
+        if (SetPreferredAppMode_ != NULL) SetPreferredAppMode_(APPMODE_ALLOWDARK);
+        if (RefreshImmersiveColorPolicyState_ != NULL) RefreshImmersiveColorPolicyState_();
+        if (AllowDarkModeForWindow_ != NULL) AllowDarkModeForWindow_(hwnd, TRUE);
+        FreeLibrary(uxtheme);
+    }
+    SetWindowTheme(hwnd, L"DarkMode_Explorer", NULL);
+
+    BOOL dark = TRUE;
+    if (DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark)) != S_OK) {
+        DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark));
+    }
+
+    /* SWP_FRAMECHANGED alone does NOT reliably repaint the caption on Win10
+       (the request gets coalesced away before DWM composes the first frame,
+       so the bar stays white until an unrelated event - focus change, or the
+       user resizing by hand - happens to force a real non-client repaint).
+       Doing an actual 1px grow-then-restore is the geometry change DWM won't
+       ignore - it's precisely the resize the user found works by hand, just
+       done programmatically and immediately, before the first present, so
+       it's never visible. */
+    RECT rc;
+    GetWindowRect(hwnd, &rc);
+    SetWindowPos(hwnd, NULL, 0, 0, rc.right - rc.left + 1, rc.bottom - rc.top + 1,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    SetWindowPos(hwnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+}
+#endif
 
 int main(int argc, char **argv) {
     (void)argc;
@@ -69,6 +145,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+#ifdef _WIN32
+    /* applied AFTER the renderer exists: creating the D3D renderer touches
+       the window's styles/theme, which was stomping the dark non-client
+       theming when this ran before it. */
+    enable_dark_titlebar(window);
+#endif
 
     ic_cd4555_register();
     ic_cd74hc04_register();
