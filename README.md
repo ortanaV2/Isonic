@@ -2,14 +2,16 @@
 
 Isonic is an application for designing and simulating computer architectures.
 It combines schematic capture with live logic simulation, letting you build
-circuits — from single gates up to full CPUs — out of wires and ICs and watch
+circuits - from single gates up to full CPUs - out of wires and ICs and watch
 signals propagate in real time.
 
 Beyond off-the-shelf parts, Isonic lets you emulate your own real ICs: define
 a chip's pinout and behavior once, and place it like any other component.
-This also makes Isonic the schematic-design foundation for PCB development —
+This also makes Isonic the schematic-design foundation for PCB development -
 pairing schematic entry with the groundwork for PCB layout and routing in one
 tool.
+
+<img width="1278" height="829" alt="image" src="https://github.com/user-attachments/assets/022658c9-fbef-466e-829c-1f1f9258006a" />
 
 ## Building
 
