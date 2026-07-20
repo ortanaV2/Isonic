@@ -52,6 +52,14 @@ void data_editor_init(DataEditor *de);
    selected, a wire selected, or a component selected that isn't this IC). */
 Component *data_editor_eligible(Circuit *circuit);
 
+/* Width the Manage Data button would have if shown this frame (0 if
+   eligible is 0) - the real font-measured width, independent of position.
+   app.c calls this (with data_editor_eligible's result) once per frame,
+   before taskbar_render, and feeds it to
+   taskbar_position_annotation_group so the Section-Labeling/Text Label
+   group always starts right after this button, never under it. */
+int data_editor_button_width(TTF_Font *font, int eligible);
+
 /* Draws the "Manage Data" button just right of the taskbar's Components
    button (only if eligible != NULL - this only gates the button, not the
    panel below) and, if open, the scrollable address/data panel along the

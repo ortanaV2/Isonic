@@ -523,11 +523,28 @@ void taskbar_layout(Taskbar *tb, int window_w) {
         tb->button_rects[i].w = w;
         tb->button_rects[i].h = btn_h;
         /* the annotation-tool group (Section-Labeling/Text Label) starts
-           right after Components, separated by the same GROUP_GAP the File/
-           Settings group uses on the left, instead of just BUTTON_MARGIN -
-           see taskbar_render's own divider line drawn through the middle of
-           this gap. */
+           right after Components here, separated by the same GROUP_GAP the
+           File/Settings group uses on the left, instead of just
+           BUTTON_MARGIN - see taskbar_render's own divider line drawn
+           through the middle of this gap. This is only the BASE position
+           though - taskbar_position_annotation_group (called every frame,
+           since Manage Data's own width depends on the real font and on
+           whether an AT28C64B happens to be selected right now, neither of
+           which taskbar_layout - called only once, on init/resize - has
+           access to) shifts button_rects[TOOL_SECTION..TOOL_TEXT_LABEL]
+           further right by Manage Data's actual width whenever that button
+           is showing, so it never overlaps this group. */
         x += w + (i == TOOL_PLACE_IC ? GROUP_GAP : BUTTON_MARGIN);
+    }
+}
+
+void taskbar_position_annotation_group(Taskbar *tb, int manage_data_w) {
+    int x = tb->button_rects[TOOL_PLACE_IC].x + tb->button_rects[TOOL_PLACE_IC].w;
+    if (manage_data_w > 0) x += BUTTON_MARGIN + manage_data_w;
+    x += GROUP_GAP;
+    for (int i = TOOL_SECTION; i <= TOOL_TEXT_LABEL; i++) {
+        tb->button_rects[i].x = x;
+        x += tb->button_rects[i].w + BUTTON_MARGIN;
     }
 }
 
@@ -605,10 +622,13 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
     SDL_RenderDrawLine(renderer, divider_x, BUTTON_MARGIN + 3, divider_x, TASKBAR_HEIGHT - BUTTON_MARGIN - 3);
 
     /* same divider, marking off the Section-Labeling/Text Label annotation
-       group from the main tool group - see taskbar_layout's matching
-       GROUP_GAP after TOOL_PLACE_IC. */
-    int divider_x2 = (tb->button_rects[TOOL_PLACE_IC].x + tb->button_rects[TOOL_PLACE_IC].w +
-                       tb->button_rects[TOOL_SECTION].x) / 2;
+       group from whatever precedes it - Components alone, or Components +
+       Manage Data when that button is showing. button_rects[TOOL_SECTION].x
+       is always exactly GROUP_GAP past that "whatever precedes it" edge (see
+       taskbar_position_annotation_group, called every frame), so backing off
+       half a GROUP_GAP from it lands the divider centered in the actual gap
+       without this code needing to know Manage Data's width itself. */
+    int divider_x2 = tb->button_rects[TOOL_SECTION].x - GROUP_GAP / 2;
     SDL_SetRenderDrawColor(renderer, 60, 60, 66, 255);
     SDL_RenderDrawLine(renderer, divider_x2, BUTTON_MARGIN + 3, divider_x2, TASKBAR_HEIGHT - BUTTON_MARGIN - 3);
 

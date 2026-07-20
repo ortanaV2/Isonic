@@ -106,6 +106,13 @@ typedef enum {
 void taskbar_init(Taskbar *tb);
 /* Recomputes button rects; call whenever the window is resized. */
 void taskbar_layout(Taskbar *tb, int window_w);
+/* Shifts button_rects[TOOL_SECTION..TOOL_TEXT_LABEL] to start manage_data_w
+   (0 if Manage Data isn't showing this frame) past Components, so that group
+   never overlaps the Manage Data button - call every frame, before
+   taskbar_render, since Manage Data's width depends on the real font and on
+   whether an AT28C64B happens to be selected right now, neither of which
+   taskbar_layout (called only once, on init/resize) has access to. */
+void taskbar_position_annotation_group(Taskbar *tb, int manage_data_w);
 /* Just the bar itself (File/Settings/tool buttons, hover tooltips) - not
    either dropdown, see taskbar_render_dropdowns below for those. hover_x/
    hover_y (current mouse position) lights up whichever button the cursor is

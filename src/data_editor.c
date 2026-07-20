@@ -128,6 +128,14 @@ static void draw_thick_line(SDL_Renderer *renderer, float x0, float y0, float x1
     SDL_RenderGeometry(renderer, NULL, verts, 4, indices, 6);
 }
 
+int data_editor_button_width(TTF_Font *font, int eligible) {
+    if (!eligible) return 0;
+    int tw = 0, th = 0;
+    if (font != NULL) text_util_measure(font, "Manage Data", &tw, &th);
+    (void)th;
+    return BUTTON_PADDING_X + tw + BUTTON_PADDING_X;
+}
+
 void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, Component *eligible,
                         const Taskbar *tb, int window_w, int window_h, int hover_x, int hover_y) {
     /* only closes itself if the component it's editing was deleted from the
@@ -146,15 +154,15 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
         const char *label = "Manage Data";
         int tw = 0, th = 0;
         if (font != NULL) text_util_measure(font, label, &tw, &th);
-        /* anchored after the whole Section-Labeling/Text Label group now,
-           not directly after Components - that group sits permanently
-           between them (see taskbar.c's GROUP_GAP after TOOL_PLACE_IC), so
-           anchoring here directly off Components would have this button
-           overlap it whenever it's shown. */
-        const SDL_Rect *last_btn = &tb->button_rects[TOOL_TEXT_LABEL];
+        /* anchored directly off Components, same as always - app.c calls
+           taskbar_position_annotation_group every frame (with this same
+           width, via data_editor_button_width) so the Section-Labeling/Text
+           Label group always starts right after this button instead of
+           overlapping it. */
+        const SDL_Rect *comp_btn = &tb->button_rects[TOOL_PLACE_IC];
         de->button_rect = (SDL_Rect){
-            last_btn->x + last_btn->w + BUTTON_MARGIN, last_btn->y,
-            BUTTON_PADDING_X + tw + BUTTON_PADDING_X, last_btn->h,
+            comp_btn->x + comp_btn->w + BUTTON_MARGIN, comp_btn->y,
+            BUTTON_PADDING_X + tw + BUTTON_PADDING_X, comp_btn->h,
         };
 
         int btn_hovered = point_in(&de->button_rect, hover_x, hover_y);

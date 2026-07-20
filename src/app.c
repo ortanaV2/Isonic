@@ -471,6 +471,16 @@ void app_render(App *app, SDL_Renderer *renderer) {
        otherwise it stays highlighted forever after switching to Select/
        Wire/Input, well past the place-mode it was actually meant to show. */
     const char *highlighted_ic = (app->active_tool == TOOL_PLACE_IC) ? app->place_ic_name : NULL;
+
+    /* shift the Section-Labeling/Text Label button group over by the Manage
+       Data button's real width, if it's showing this frame - must happen
+       before taskbar_render below (and before data_editor_render further
+       down, which computes the same width fresh off the same
+       data_editor_eligible call, so the two never disagree about it). */
+    Component *manage_data_eligible = data_editor_eligible(&app->circuit);
+    int manage_data_w = data_editor_button_width(app->font, manage_data_eligible != NULL);
+    taskbar_position_annotation_group(&app->taskbar, manage_data_w);
+
     taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, outside_hover_mx, outside_hover_my);
 
     /* the bottom-left chip stack renders early now, BELOW the Manage Data
@@ -493,7 +503,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
     int panel_hover = render_diagnostics_panel(renderer, app->font, diag_max_x, app->window_h, &app->diagnostics,
                                                 outside_hover_mx, outside_hover_my);
 
-    data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,
+    data_editor_render(renderer, app->font, &app->data_editor, manage_data_eligible, &app->taskbar,
                         app->window_w, app->window_h, outside_hover_mx, outside_hover_my);
 
     /* slides left to sit beside the Manage Data panel instead of
