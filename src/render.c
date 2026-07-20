@@ -300,21 +300,6 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
     draw_filled_circle(renderer, stx, sty, r);
 }
 
-void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx, int gy, int w, int h, int valid) {
-    int sx, sy;
-    camera_grid_to_screen(cam, gx, gy, &sx, &sy);
-    float cell = camera_cell_px(cam);
-    SDL_Rect r = { sx, sy, (int)lroundf(w * cell), (int)lroundf(h * cell) };
-    if (valid) {
-        SDL_SetRenderDrawColor(renderer, 90, 160, 220, 90);
-    } else {
-        SDL_SetRenderDrawColor(renderer, 220, 70, 70, 90);
-    }
-    SDL_RenderFillRect(renderer, &r);
-    SDL_SetRenderDrawColor(renderer, 230, 230, 235, 180);
-    SDL_RenderDrawRect(renderer, &r);
-}
-
 void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int x, int y, int valid) {
     /* pure proportional scaling, same as render_junctions' plain
        connection_dot_radius_px(cell) - no minimum-size floor here, only
@@ -599,7 +584,16 @@ static float fit_label_scale(TTF_Font *font, const char *text, float scale, floa
    render_component_pin_dots, called later in a dedicated top layer so a stub
    line can never slice back through a dot. */
 static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const Component *c,
-                            int highlighted, int show_pin_labels, int ghost) {
+                            int highlighted, int show_pin_labels, int ghost, int ghost_valid) {
+    /* what "highlighted" means for a ghost - solid SELECTION_COLOR while it
+       could actually be placed there, the same red DIAG_ERROR_COLOR/
+       render_via_placement_preview already use for "can't drop this here"
+       when it can't (see render_ic_ghost) - replaces the old separate
+       translucent footprint-box overlay this used to be layered under,
+       which showed through the body's own notch cutout as a mismatched
+       rectangle instead of following the body's actual outline. Unused
+       (and irrelevant) when ghost is false. */
+    SDL_Color ghost_col = ghost_valid ? SELECTION_COLOR : DIAG_ERROR_COLOR;
     const IC_Def *def = c->ic_def;
     int body_w_cells, body_h_cells;
     component_get_size(c, &body_w_cells, &body_h_cells); /* already swapped for a 90/270 rotation */
@@ -644,15 +638,15 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     for (int pi = 0; pi < c->pin_count; pi++) {
         const Pin *p = &c->pins[pi];
         /* a ghost's pins have no real signal value to show (nothing's been
-           simulated yet - see render_ic_ghost) - solid SELECTION_COLOR
-           throughout instead, same highlighted look every other ghost
-           element (wires, sections, text labels) already uses */
-        SDL_Color col = ghost ? SELECTION_COLOR : signal_color(p->value);
+           simulated yet - see render_ic_ghost) - ghost_col throughout
+           instead, same highlighted look every other ghost element (wires,
+           sections, text labels) already uses */
+        SDL_Color col = ghost ? ghost_col : signal_color(p->value);
         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
         draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], tip_sx[pi], tip_sy[pi], thickness);
     }
 
-    SDL_Color border = (ghost || c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR;
+    SDL_Color border = ghost ? ghost_col : ((c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR);
     SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
     /* one straight segment per side of the current bounding box, in BodyEdge
        order - whichever one the notch (always the IC's "pin 1" side, base
@@ -764,7 +758,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
             float name_scale = fit_a < fit_b ? fit_a : fit_b;
             float text_angle = (c->rotation & 1) ? 0.0f : -90.0f;
             if (name_scale > 0.0f) {
-                SDL_Color name_col = ghost ? SELECTION_COLOR : IC_NAME_LABEL_COLOR;
+                SDL_Color name_col = ghost ? ghost_col : IC_NAME_LABEL_COLOR;
                 text_util_draw_scaled_rotated(renderer, font_large, def->name, sx + w / 2, sy + h / 2,
                                                name_col, name_scale, text_angle);
             }
@@ -773,18 +767,20 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
 }
 
 void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const IC_Def *def,
-                      int grid_x, int grid_y, int rotation) {
+                      int grid_x, int grid_y, int rotation, int valid) {
     Component ghost = { 0 };
     component_init_ic(&ghost, grid_x, grid_y, def);
     ghost.rotation = rotation;
     /* never showing individual pin labels (just the big centered part name,
        same as a real placed IC falls back to once zoomed out too far for
        those to fit - see render_ic_body's own show_pin_labels branch), and
-       ghost=1 forces the border/pin-stubs/name into a solid SELECTION_COLOR
-       throughout - the same highlighted look every other ghost element
-       (wires, sections, text labels) uses, rather than a not-yet-placed
-       component's nonexistent net/signal state. */
-    render_ic_body(renderer, font_large, cam, &ghost, 0, 0, 1);
+       ghost=1 forces the border/pin-stubs/name into a solid highlighted
+       color throughout (SELECTION_COLOR if valid, DIAG_ERROR_COLOR-red if
+       not - see render_ic_body's own ghost_col) instead of a not-yet-placed
+       component's nonexistent net/signal state - this IS the validity
+       indicator now, replacing the old separate translucent footprint-box
+       overlay entirely (see the caller). */
+    render_ic_body(renderer, font_large, cam, &ghost, 0, 0, 1, valid);
 }
 
 static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Component *c) {
@@ -1166,7 +1162,7 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         const Component *c = &circuit->components[i];
         if (!c->in_use || c->type != COMP_IC) continue;
         int highlighted = (i == highlight_component_a || i == highlight_component_b);
-        render_ic_body(renderer, font_large, cam, c, highlighted, 1, 0);
+        render_ic_body(renderer, font_large, cam, c, highlighted, 1, 0, 1); /* ghost=0 - ghost_valid unused */
     }
 
     /* pass 2: connection dots on top, so no line/stub can slice through one -

@@ -352,7 +352,7 @@ static int find_via_hover_at(App *app, int mx, int my) {
 static void render_paste_ghost(SDL_Renderer *renderer, App *app, int gx, int gy) {
     for (int i = 0; i < app->clipboard_component_count; i++) {
         const ClipboardComponent *cc = &app->clipboard_components[i];
-        render_ic_ghost(renderer, app->font_large, &app->camera, cc->ic_def, gx + cc->dx, gy + cc->dy, cc->rotation);
+        render_ic_ghost(renderer, app->font_large, &app->camera, cc->ic_def, gx + cc->dx, gy + cc->dy, cc->rotation, 1);
     }
     for (int i = 0; i < app->clipboard_wire_count; i++) {
         const ClipboardWire *cw = &app->clipboard_wires[i];
@@ -474,11 +474,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
             if (app->place_rotation & 1) { int t = w; w = h; h = t; }
             int valid = !circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1);
-            /* the translucent green/red wash still shows through the
-               accurate body's own unfilled interior, drawn right on top -
-               see render_ic_ghost's own comment */
-            render_placement_preview(renderer, &app->camera, gx, gy, w, h, valid);
-            render_ic_ghost(renderer, app->font_large, &app->camera, pending_ic, gx, gy, app->place_rotation);
+            render_ic_ghost(renderer, app->font_large, &app->camera, pending_ic, gx, gy, app->place_rotation, valid);
         }
     }
 

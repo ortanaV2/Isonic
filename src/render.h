@@ -31,29 +31,31 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
 /* Rubber-band line shown while the user drags out a new wire, before it is committed. */
 void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int fy, int tx, int ty);
 
-/* Ghost footprint shown while a placement tool is active, following the cursor. */
-void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx, int gy, int w, int h, int valid);
-
 /* Near-full-fidelity ghost of an IC about to be placed at (grid_x, grid_y)
    with the given rotation - same body/notch/pin-stub rendering render_circuit
    itself uses for an already-placed IC (render_ic_body), just without
    individual pin name labels (a placement ghost falls back to the same big
    centered part name a real IC shows once zoomed out too far for per-pin
-   labels, regardless of zoom - see render_ic_body's show_pin_labels).
-   Doesn't fill the body interior (no IC does - see render_ic_body's own
-   comment), so layering this over render_placement_preview's translucent
-   green/red wash still shows that validity tint through the outline. Used
-   by both the single-IC infinite-placement loop and the general multi-item
-   paste ghost (see app_pending_place_ic/render_paste_ghost in app.c). */
+   labels, regardless of zoom - see render_ic_body's show_pin_labels) and
+   with the whole thing (border/pin-stubs/name) solid-colored instead of
+   showing real signal/net colors - SELECTION_COLOR if valid, a red
+   DIAG_ERROR_COLOR-style tint if not (see render_ic_body's own ghost_col).
+   That color IS the validity indicator - unlike the general multi-item
+   paste ghost (which is never invalid, see render_paste_ghost), the
+   single-IC infinite-placement loop still checks circuit_footprint_overlaps
+   and passes the result through as valid, no separate translucent
+   footprint-box overlay layered underneath anymore (that used to show
+   through the body's own notch cutout as a mismatched rectangle instead of
+   following the body's actual outline). */
 void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const IC_Def *def,
-                      int grid_x, int grid_y, int rotation);
+                      int grid_x, int grid_y, int rotation, int valid);
 
 /* Ghost preview shown while TOOL_VIA is active and the cursor is snapped to
-   an existing wire node (see circuit_find_wire_node_near) - same role as
-   render_placement_preview above, but for a single point instead of a
-   footprint. valid is false when the node's own layer already matches the
-   active layer (placing a via there would be a no-op, colored like
-   render_placement_preview's own invalid case). */
+   an existing wire node (see circuit_find_wire_node_near), or a copied via
+   following the cursor as part of a paste ghost (see render_paste_ghost in
+   app.c) - a ring around the point, VIA_RING_COLOR if valid or
+   DIAG_ERROR_COLOR-red if not. valid is false when the node's own layer
+   already matches the active layer (placing a via there would be a no-op). */
 void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int x, int y, int valid);
 
 /* Rubber-band selection box, shown while a Select-mode marquee drag is in
