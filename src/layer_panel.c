@@ -27,12 +27,12 @@
    below it starts another (ROW_H-BTN_SIZE)/2 further before its own button,
    so two consecutive rows' buttons end up that same amount apart twice over;
    without the base term alone, the header-to-first-row gap would only be
-   half that. The extra +2 on top brings the active row's highlight down to
+   half that. The extra +1 on top brings the active row's highlight down to
    the exact same y data_editor.c's own header-to-first-row gap (HEADER_H +
    HEADER_BODY_GAP) puts its current-address highlight at, so the two
    panels' row highlights line up when both are open side by side - without
-   it the Layers panel's highlight sat 2px higher. */
-#define HEADER_ROW_GAP (((ROW_H - BTN_SIZE) / 2) + 2)
+   it the Layers panel's highlight sat 1px higher. */
+#define HEADER_ROW_GAP (((ROW_H - BTN_SIZE) / 2) + 1)
 
 #define CLOSE_X_THICKNESS 1.8f  /* matches data_editor.c's own close-X stroke weight exactly */
 

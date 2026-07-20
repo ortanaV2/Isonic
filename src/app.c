@@ -428,8 +428,17 @@ void app_render(App *app, SDL_Renderer *renderer) {
        read as broken either way. A hovered chip still wins over a hovered
        canvas target below if somehow both are true at once (they never
        overlap in practice - the panel sits over empty space at the
-       bottom-left corner). */
-    int panel_hover = render_diagnostics_panel(renderer, app->font, app->window_w, app->window_h, &app->diagnostics,
+       bottom-left corner).
+
+       Chips still shouldn't be added past whatever's docked on the right
+       edge even though they now render underneath it - stopping only at the
+       window edge left them running full-length behind the Manage Data
+       panel, invisible but still occupying that space (and still reachable
+       by mouse hover, which would have been confusing). Clamp the available
+       width to that panel's left edge when it's open, same one-frame-stale
+       panel_rect read layer_panel_right_margin below already relies on. */
+    int diag_max_x = app->data_editor.open ? app->data_editor.panel_rect.x : app->window_w;
+    int panel_hover = render_diagnostics_panel(renderer, app->font, diag_max_x, app->window_h, &app->diagnostics,
                                                 outside_hover_mx, outside_hover_my);
 
     data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,

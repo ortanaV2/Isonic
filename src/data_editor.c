@@ -8,11 +8,12 @@
 #define BUTTON_PADDING_X 14
 #define PANEL_W 380
 #define HEADER_H 28
-/* same gap as between two rows' bit-toggle boxes (each box insets 2px top/
-   bottom within its ROW_H, so consecutive boxes end up BIT_GAP apart
-   vertically too) - keeps the header-to-list gap visually consistent with
-   the list's own row spacing instead of an arbitrarily bigger one. */
-#define HEADER_BODY_GAP BIT_GAP
+/* one less than BIT_GAP (the gap between two rows' own bit-toggle boxes,
+   see BIT_GAP below) - trimmed 1px off what would otherwise keep the
+   header-to-list gap visually consistent with the list's own row spacing,
+   to match layer_panel.c's own HEADER_ROW_GAP 1:1 (see its comment) after
+   both were nudged down together for cross-panel alignment. */
+#define HEADER_BODY_GAP (BIT_GAP - 1)
 #define ROW_H 22
 #define ROW_PAD_X 8
 #define ADDR_DEC_W 46
@@ -24,6 +25,7 @@
 #define SCROLLBAR_MARGIN 6
 #define SCROLLBAR_PAD_Y BIT_GAP /* same gap above/below the track as HEADER_BODY_GAP uses */
 #define SCROLLBAR_MIN_THUMB_H 20
+#define ROW_HIGHLIGHT_SCROLLBAR_GAP 6 /* breathing room between the current-address highlight and the scrollbar */
 #define CLOSE_X_THICKNESS 1.8f
 
 static const SDL_Color BG_COLOR = { 32, 32, 36, 255 }; /* #202024, opaque - matches layer_panel.c/settings_panel.c */
@@ -256,10 +258,12 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
                Layer"'s idle background (layer_panel.c's BUTTON_BG), lighter
                than the panel itself so it reads as a highlight without
                fighting the bit-box/hover colors drawn on top of it below.
-               Stops at the scrollbar's own left edge instead of running the
-               full panel width, so it never paints over the track/thumb
-               sitting there. */
-            SDL_Rect row_bg = { de->panel_rect.x, ry, de->scrollbar_rect.x - de->panel_rect.x, de->row_h };
+               Stops a few px short of the scrollbar's own left edge (not
+               flush against it) so it visibly ends before the scrollbar
+               rather than looking like it runs into/underneath it. */
+            int row_bg_w = de->scrollbar_rect.x - de->panel_rect.x - ROW_HIGHLIGHT_SCROLLBAR_GAP;
+            if (row_bg_w < 0) row_bg_w = 0;
+            SDL_Rect row_bg = { de->panel_rect.x, ry, row_bg_w, de->row_h };
             SDL_SetRenderDrawColor(renderer, BIT_BG.r, BIT_BG.g, BIT_BG.b, 255);
             SDL_RenderFillRect(renderer, &row_bg);
         }
