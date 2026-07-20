@@ -19,7 +19,7 @@ tool.
 
 > No build tools required — just download and run. Windows only for now.
 
-[Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.0.0/isonic-windows-x64-v1.0.0.zip)
+[Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.0.0-preview/isonic-windows-x64-v1.0.0-preview.zip)
 
 <details>
 <summary><strong>Manual download</strong></summary>
