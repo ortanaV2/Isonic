@@ -21,6 +21,7 @@
 static void app_reset_transient_state(App *app) {
     app->active_tool = TOOL_SELECT;
     app->place_ic_name = NULL;
+    app->place_rotation = 0;
 
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
@@ -365,6 +366,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
             int gx, gy, w, h;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
+            if (app->place_rotation & 1) { int t = w; w = h; h = t; }
             int valid = !circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1);
             render_placement_preview(renderer, &app->camera, gx, gy, w, h, valid);
         }
@@ -417,7 +419,19 @@ void app_render(App *app, SDL_Renderer *renderer) {
        otherwise it stays highlighted forever after switching to Select/
        Wire/Input, well past the place-mode it was actually meant to show. */
     const char *highlighted_ic = (app->active_tool == TOOL_PLACE_IC) ? app->place_ic_name : NULL;
-    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, highlighted_ic, outside_hover_mx, outside_hover_my);
+    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, outside_hover_mx, outside_hover_my);
+
+    /* the bottom-left chip stack renders early now, BELOW the Manage Data
+       and Layers panels (drawn right after) - it used to be the very last
+       thing drawn and would sit on top of (and get hidden behind, depending
+       on draw order at the time) whatever's docked on the right edge, which
+       read as broken either way. A hovered chip still wins over a hovered
+       canvas target below if somehow both are true at once (they never
+       overlap in practice - the panel sits over empty space at the
+       bottom-left corner). */
+    int panel_hover = render_diagnostics_panel(renderer, app->font, app->window_w, app->window_h, &app->diagnostics,
+                                                outside_hover_mx, outside_hover_my);
+
     data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,
                         app->window_w, app->window_h, outside_hover_mx, outside_hover_my);
 
@@ -428,11 +442,6 @@ void app_render(App *app, SDL_Renderer *renderer) {
                         app->window_w, app->window_h, layer_panel_right_margin, app->settings.layer_panel_anchor_left,
                         outside_hover_mx, outside_hover_my);
 
-    /* the bottom-left chip stack always renders on top of everything else;
-       a hovered chip wins over a hovered canvas target if somehow both are
-       true at once (they never overlap in practice - the panel sits over
-       empty space at the bottom-left corner) */
-    int panel_hover = render_diagnostics_panel(renderer, app->font, app->window_h, &app->diagnostics, outside_hover_mx, outside_hover_my);
     int hovered_diag = (panel_hover >= 0) ? panel_hover : find_diagnostic_hover_at(app, outside_hover_mx, outside_hover_my);
     if (hovered_diag >= 0) {
         render_diagnostic_tooltip(renderer, app->font, &app->diagnostics.items[hovered_diag],
@@ -447,8 +456,16 @@ void app_render(App *app, SDL_Renderer *renderer) {
         }
     }
 
-    /* topmost - a true modal, drawn last so its scrim covers absolutely
-       everything else while open - this is the one call that gets the
-       REAL cursor position, so the popup's own buttons stay interactive. */
+    /* the File/Components dropdowns are the app's topmost layer short of the
+       Settings modal - drawn last of the "ordinary" UI, after the Manage
+       Data/Layers panels, so an open dropdown never ends up tucked behind
+       either one (it used to, since taskbar_render drew them together with
+       the rest of the taskbar bar, first). */
+    taskbar_render_dropdowns(renderer, app->font, &app->taskbar, highlighted_ic, outside_hover_mx, outside_hover_my);
+
+    /* topmost of all - a true modal, drawn last so its scrim covers
+       absolutely everything else while open - this is the one call that
+       gets the REAL cursor position, so the popup's own buttons stay
+       interactive. */
     settings_panel_render(renderer, app->font, &app->settings_panel, app->window_w, app->window_h, hover_mx, hover_my);
 }

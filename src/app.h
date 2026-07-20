@@ -120,6 +120,15 @@ typedef struct {
     const IC_Def *clipboard_ic_def;
     int pasting;
 
+    /* Rotation (0-3 quarter turns, see Component.rotation) the NEXT IC
+       placed will get - applies to both an IC chosen from the Components
+       menu and an in-progress paste, same "whichever placement is pending"
+       resolution as app_pending_place_ic itself. R (KEYBIND_ROTATE)
+       increments it while a placement is pending; reset to 0 whenever a new
+       placement session starts (a fresh menu pick or Ctrl+C) so rotation
+       never silently carries over from an unrelated previous part. */
+    int place_rotation;
+
     /* dragging out a new wire between two arbitrary grid points - kind tags it
        as a plain wire or an Input/Output terminal (see WireKind in circuit.h) */
     int wiring;

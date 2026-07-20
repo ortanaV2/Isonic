@@ -212,3 +212,12 @@ unsigned char *ic_at28c64b_memory(Component *c) {
     if (!ic_at28c64b_is(c)) return NULL;
     return g_at28c64b_mem[at28c64b_slot_for(c->seq_state)];
 }
+
+int ic_at28c64b_current_address(const Component *c) {
+    if (!ic_at28c64b_is(c)) return -1;
+    int addr = 0;
+    for (int i = 0; i < 13; i++) {
+        if (c->pins[k_addr_idx[i]].value == SIG_HIGH) addr |= (1 << i);
+    }
+    return addr;
+}

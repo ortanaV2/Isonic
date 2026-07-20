@@ -524,8 +524,7 @@ static int layout_menu_rows(const Taskbar *tb, MenuRow *out_rows, int max_rows) 
     return n;
 }
 
-void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool active_tool, const char *active_ic_name,
-                     int hover_x, int hover_y) {
+void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool active_tool, int hover_x, int hover_y) {
     SDL_Rect bar = { 0, 0, 4096, TASKBAR_HEIGHT };
     SDL_SetRenderDrawColor(renderer, 40, 40, 44, 255);
     SDL_RenderFillRect(renderer, &bar);
@@ -614,7 +613,10 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
     if (hovered_settings && !tb->file_menu_open) {
         draw_hover_tooltip(renderer, get_named_texture(renderer, &tb->settings_label_texture, font, "Settings"), &tb->settings_button_rect);
     }
+}
 
+void taskbar_render_dropdowns(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, const char *active_ic_name,
+                               int hover_x, int hover_y) {
     if (tb->file_menu_open) {
         SDL_Rect frows[FILE_MENU_COUNT];
         int fn = layout_file_menu_rows(tb, frows, FILE_MENU_COUNT);

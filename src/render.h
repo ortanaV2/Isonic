@@ -64,10 +64,14 @@ void render_diagnostic_highlights(SDL_Renderer *renderer, const Camera *cam, con
 
 /* Bottom-left stack of warning/error chips, one per diagnostic, growing
    left to right - red for errors, yellow for warnings, each labeled with
-   its short summary. hover_x/hover_y (screen space) pick out which chip (if
-   any) the cursor is over; returns that diagnostic's index into
-   diagnostics->items, or -1 if none is hovered. */
-int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_h,
+   its short summary. Stops adding chips once the next one wouldn't fully
+   fit before window_w - the rest are simply left off rather than spilling
+   past the window edge or under whatever's docked on the right (Manage
+   Data/Layers panel); nothing else indicates there were more. hover_x/
+   hover_y (screen space) pick out which chip (if any) the cursor is over;
+   returns that diagnostic's index into diagnostics->items, or -1 if none is
+   hovered. */
+int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_w, int window_h,
                               const DiagnosticSet *diagnostics, int hover_x, int hover_y);
 
 /* Word-wrapped detail box for one diagnostic, anchored near (anchor_x,

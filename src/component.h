@@ -37,24 +37,33 @@ typedef struct {
 typedef struct {
     int in_use;
     ComponentType type;
-    int grid_x, grid_y;      /* origin in grid cells */
+    int grid_x, grid_y;      /* origin in grid cells - always the top-left corner of the CURRENT
+                                (rotation-applied) footprint, see component_get_size/component_pin_world_pos */
     const IC_Def *ic_def;     /* IC definition this instance was placed from */
     Pin pins[MAX_PINS_PER_COMPONENT];
     int pin_count;
     int selected;
+    /* 0-3, quarter turns counterclockwise from the IC's natural (pin-1-
+       top-left) orientation - see component_pin_world_pos for the rotation
+       math and app.h's place_rotation for how this gets set while placing. */
+    int rotation;
     unsigned char seq_state[IC_SEQ_STATE_BYTES]; /* see IC_SEQ_STATE_BYTES above */
 } Component;
 
-/* Initializes an already-allocated component slot for the given IC. */
+/* Initializes an already-allocated component slot for the given IC, at
+   rotation 0 - see circuit_add_ic for setting a placed instance's rotation. */
 void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def);
 
-/* Absolute grid position of a pin (component origin + local offset). */
+/* Absolute grid position of a pin (component origin + local offset, rotated
+   by c->rotation quarter-turns - see the .c file). */
 void component_pin_world_pos(const Component *c, int pin_index, int *out_x, int *out_y);
 
 /* Returns pin index whose absolute position matches (x,y), or -1 if none. */
 int component_find_pin_at(const Component *c, int x, int y);
 
-/* Footprint size in grid cells - see ic_dip_body_size in ic_registry.h. */
+/* Footprint size in grid cells - see ic_dip_body_size in ic_registry.h. Width
+   and height are swapped from the IC's natural size at rotation 1/3 (90/270
+   degrees). */
 void component_get_size(const Component *c, int *out_w, int *out_h);
 
 #endif

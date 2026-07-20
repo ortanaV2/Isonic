@@ -218,24 +218,46 @@ static void draw_arc_strip(SDL_Renderer *renderer, float cx, float cy, float rad
     SDL_RenderGeometry(renderer, NULL, verts, (NOTCH_ARC_SEGMENTS + 1) * 2, indices, NOTCH_ARC_SEGMENTS * 6);
 }
 
-/* Draws the IC body's top edge with a semicircular notch cut into its middle,
-   like the orientation marking on a real DIP package - pin 1 (see
-   component_init_ic) always sits just to its left. The straight edge is split
-   in two around the notch instead of drawn full-width underneath it, so the
-   arc reads as an actual cut rather than a bump added on top of an intact line. */
-static void draw_top_edge_with_notch(SDL_Renderer *renderer, int left_x, int top_y, int body_w_px, float cell, float thickness) {
+/* Draws one edge of the IC body's border with a semicircular notch cut into
+   its middle, like the orientation marking on a real DIP package - pin 1
+   (see component_init_ic) always sits just to its left of wherever this
+   edge currently is (see the Edge enum below - the notch stays on whichever
+   edge component_init_ic's "top" rotates to, see render_ic_body). The edge
+   runs from (x0,y0) to (x1,y1); (inward_nx,inward_ny) is the unit normal
+   pointing INTO the body, i.e. which way the notch bulges - this one
+   function covers all 4 possible edges (top/bottom/left/right) generically
+   instead of 4 hand-mirrored copies, since the geometry is identical up to
+   which direction is "inward". The straight edge is split in two around the
+   notch instead of drawn full-width underneath it, so the arc reads as an
+   actual cut rather than a bump added on top of an intact line. */
+static void draw_edge_with_notch(SDL_Renderer *renderer, float x0, float y0, float x1, float y1,
+                                  float inward_nx, float inward_ny, float cell, float thickness) {
     float radius = notch_radius_px(cell);
-    float cx = left_x + body_w_px * 0.5f;
+    float mx = (x0 + x1) * 0.5f, my = (y0 + y1) * 0.5f;
+    float dx = x1 - x0, dy = y1 - y0;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 0.0001f) return;
+    float ux = dx / len, uy = dy / len; /* unit tangent along the edge */
 
-    draw_thick_line(renderer, left_x, top_y, (int)lroundf(cx - radius), top_y, thickness);
-    draw_thick_line(renderer, (int)lroundf(cx + radius), top_y, left_x + body_w_px, top_y, thickness);
+    draw_thick_line(renderer, (int)lroundf(x0), (int)lroundf(y0),
+                     (int)lroundf(mx - ux * radius), (int)lroundf(my - uy * radius), thickness);
+    draw_thick_line(renderer, (int)lroundf(mx + ux * radius), (int)lroundf(my + uy * radius),
+                     (int)lroundf(x1), (int)lroundf(y1), thickness);
 
-    /* sweeps angle from PI down to 0 (through PI/2, not 3*PI/2) so sin(angle)
-       stays positive and the arc dips to larger y - i.e. down into the body,
-       since screen space y grows downward. Going the other way around traced
-       the mirror image, poking the notch out above the body instead. */
-    draw_arc_strip(renderer, cx, (float)top_y, radius, ISONIC_TAU * 0.5f, 0.0f, thickness);
+    /* a half-circle strip centered on the inward-normal direction always
+       bulges into the body regardless of which edge this is - see the
+       comment above. */
+    float angle_center = atan2f(inward_ny, inward_nx);
+    draw_arc_strip(renderer, mx, my, radius, angle_center - ISONIC_TAU * 0.25f, angle_center + ISONIC_TAU * 0.25f,
+                    thickness);
 }
+
+/* Which side of the body's current (rotation-applied) bounding box an edge
+   is - deliberately numbered in counterclockwise rotation order (LEFT ->
+   BOTTOM -> RIGHT -> TOP -> LEFT) so "rotate this edge by c->rotation
+   quarter-turns" is just (edge + rotation) % 4 - see component_pin_world_pos
+   for the matching point-rotation math this must stay consistent with. */
+typedef enum { EDGE_LEFT = 0, EDGE_BOTTOM = 1, EDGE_RIGHT = 2, EDGE_TOP = 3 } BodyEdge;
 
 void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int window_h) {
     /* caller clears the background before invoking this; only grid dots are drawn here */
@@ -579,7 +601,7 @@ static float fit_label_scale(TTF_Font *font, const char *text, float scale, floa
 static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const Component *c, int highlighted) {
     const IC_Def *def = c->ic_def;
     int body_w_cells, body_h_cells;
-    ic_dip_body_size(def->pin_count, &body_w_cells, &body_h_cells);
+    component_get_size(c, &body_w_cells, &body_h_cells); /* already swapped for a 90/270 rotation */
 
     int sx, sy;
     camera_grid_to_screen(cam, c->grid_x, c->grid_y, &sx, &sy);
@@ -590,14 +612,29 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     float thickness = wire_thickness_px(cell);
 
     /* pin edge anchors (screen-space) are computed once and reused by both the
-       stub pass and the label pass below, instead of recomputing per pin twice */
-    int is_left[MAX_PINS_PER_COMPONENT];
+       stub pass and the label pass below, instead of recomputing per pin twice.
+       cur_edge is which side of the CURRENT (rotated) bounding box this pin
+       attaches to - the pin's base side (left/right, see component_init_ic)
+       rotated the same c->rotation quarter-turns as everything else, using
+       the same counterclockwise BodyEdge numbering component_pin_world_pos's
+       point-rotation math is built to agree with. */
+    BodyEdge cur_edge[MAX_PINS_PER_COMPONENT];
     int edge_sx[MAX_PINS_PER_COMPONENT], edge_sy[MAX_PINS_PER_COMPONENT];
+    int tip_sx[MAX_PINS_PER_COMPONENT], tip_sy[MAX_PINS_PER_COMPONENT];
     for (int pi = 0; pi < c->pin_count; pi++) {
-        is_left[pi] = (c->pins[pi].local_dx < 0);
-        int edge_x = is_left[pi] ? c->grid_x : c->grid_x + body_w_cells;
-        int edge_y = c->grid_y + c->pins[pi].local_dy;
-        camera_grid_to_screen(cam, edge_x, edge_y, &edge_sx[pi], &edge_sy[pi]);
+        BodyEdge base_edge = (c->pins[pi].local_dx < 0) ? EDGE_LEFT : EDGE_RIGHT;
+        cur_edge[pi] = (BodyEdge)((base_edge + c->rotation) & 3);
+
+        int tip_x, tip_y;
+        component_pin_world_pos(c, pi, &tip_x, &tip_y);
+        camera_grid_to_screen(cam, tip_x, tip_y, &tip_sx[pi], &tip_sy[pi]);
+
+        switch (cur_edge[pi]) {
+            case EDGE_LEFT:   edge_sx[pi] = sx;     edge_sy[pi] = tip_sy[pi]; break;
+            case EDGE_RIGHT:  edge_sx[pi] = sx + w; edge_sy[pi] = tip_sy[pi]; break;
+            case EDGE_TOP:    edge_sx[pi] = tip_sx[pi]; edge_sy[pi] = sy;     break;
+            default /* BOTTOM */: edge_sx[pi] = tip_sx[pi]; edge_sy[pi] = sy + h; break;
+        }
     }
 
     /* stubs are drawn before the border (not after) so the border - opaque,
@@ -605,56 +642,108 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
        would otherwise bleed a little past the edge into the body interior */
     for (int pi = 0; pi < c->pin_count; pi++) {
         const Pin *p = &c->pins[pi];
-        int tip_x, tip_y;
-        component_pin_world_pos(c, pi, &tip_x, &tip_y);
-        int stx, sty;
-        camera_grid_to_screen(cam, tip_x, tip_y, &stx, &sty);
-
         SDL_Color col = signal_color(p->value);
         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
-        draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], stx, sty, thickness);
+        draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], tip_sx[pi], tip_sy[pi], thickness);
     }
 
     SDL_Color border = (c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR;
     SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
-    draw_thick_line(renderer, sx, sy + h, sx + w, sy + h, thickness); /* bottom */
-    draw_thick_line(renderer, sx, sy, sx, sy + h, thickness);         /* left */
-    draw_thick_line(renderer, sx + w, sy, sx + w, sy + h, thickness); /* right */
-    draw_top_edge_with_notch(renderer, sx, sy, w, cell, thickness);
+    /* one straight segment per side of the current bounding box, in BodyEdge
+       order - whichever one the notch (always the IC's "pin 1" side, base
+       EDGE_TOP, rotated the same as everything else) currently lands on gets
+       drawn with draw_edge_with_notch instead of a plain line. */
+    float ex0[4] = { (float)sx, (float)sx, (float)(sx + w), (float)sx };
+    float ey0[4] = { (float)sy, (float)(sy + h), (float)sy, (float)sy };
+    float ex1[4] = { (float)sx, (float)(sx + w), (float)(sx + w), (float)(sx + w) };
+    float ey1[4] = { (float)(sy + h), (float)(sy + h), (float)(sy + h), (float)sy };
+    float enx[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
+    float eny[4] = { 0.0f, -1.0f, 0.0f, 1.0f };
+    int notch_edge = (EDGE_TOP + c->rotation) & 3;
+    for (int e = 0; e < 4; e++) {
+        if (e == notch_edge) {
+            draw_edge_with_notch(renderer, ex0[e], ey0[e], ex1[e], ey1[e], enx[e], eny[e], cell, thickness);
+        } else {
+            draw_thick_line(renderer, (int)lroundf(ex0[e]), (int)lroundf(ey0[e]), (int)lroundf(ex1[e]),
+                             (int)lroundf(ey1[e]), thickness);
+        }
+    }
 
     if (font_large != NULL && cell >= PIN_LABEL_MIN_CELL_PX) {
-        /* a label may not grow past the body's horizontal center - leaves a
-           small safety gap so left/right labels never touch even when both
-           happen to be exactly at their fitted width */
+        /* a label may not grow past the body's own center along whichever
+           axis it grows on - leaves a small safety gap so two labels facing
+           each other never touch even when both happen to be exactly at
+           their fitted width. Left/right-edge pins grow horizontally
+           (constrained by half the body's width), top/bottom-edge pins grow
+           vertically (constrained by half its height) - only one of the two
+           ever applies to a real (non-square) DIP body's pins at once, but
+           both are computed since a rotated body can have either kind. */
         float gap_px = LABEL_EDGE_GAP_PX * zoom_factor(cell);
-        float available = w * 0.5f - gap_px - 2.0f;
-        if (available < 4.0f) available = 4.0f;
+        float available_x = w * 0.5f - gap_px - 2.0f;
+        if (available_x < 4.0f) available_x = 4.0f;
+        float available_y = h * 0.5f - gap_px - 2.0f;
+        if (available_y < 4.0f) available_y = 4.0f;
 
         for (int pi = 0; pi < c->pin_count; pi++) {
             const Pin *p = &c->pins[pi];
-            float pin_scale = fit_label_scale(font_large, p->name, scale, available);
+            int horizontal_growth = (cur_edge[pi] == EDGE_LEFT || cur_edge[pi] == EDGE_RIGHT);
+            /* fit_label_scale itself always measures/constrains the text's
+               UNROTATED width (tw) - exactly the dimension that ends up
+               running along the growth axis either way: unrotated for a
+               left/right pin (available_x), or rotated 90 degrees into the
+               vertical for a top/bottom pin (available_y) - so passing the
+               right `available` here is the only thing that needs to change
+               between the two cases, not fit_label_scale itself. */
+            float pin_scale = fit_label_scale(font_large, p->name, scale, horizontal_growth ? available_x : available_y);
             int tw, th;
             text_util_measure(font_large, p->name, &tw, &th);
             int stw = (int)lroundf(tw * pin_scale);
             int sth = (int)lroundf(th * pin_scale);
-            int label_x = is_left[pi] ? edge_sx[pi] + (int)lroundf(gap_px) : edge_sx[pi] - (int)lroundf(gap_px) - stw;
-            text_util_draw_scaled(renderer, font_large, p->name, label_x, edge_sy[pi] - sth / 2, LABEL_COLOR, pin_scale);
+
+            if (horizontal_growth) {
+                int label_x, label_y;
+                if (cur_edge[pi] == EDGE_LEFT) {
+                    label_x = edge_sx[pi] + (int)lroundf(gap_px);
+                } else {
+                    label_x = edge_sx[pi] - (int)lroundf(gap_px) - stw;
+                }
+                label_y = edge_sy[pi] - sth / 2;
+                text_util_draw_scaled(renderer, font_large, p->name, label_x, label_y, LABEL_COLOR, pin_scale);
+            } else {
+                /* a top/bottom-edge pin (only reachable at a 90/270 degree
+                   IC rotation) packs its neighbors just as tightly along the
+                   edge as a left/right pin's own name normally grows freely
+                   - drawing it unrotated would collide with the next pin's
+                   label exactly like the report screenshot this was fixed
+                   from. Rotating it 90 degrees turns the same "grows inward,
+                   away from the edge" layout sideways so it uses the gap
+                   between the pin row and the body's center instead, the
+                   same free space a horizontal label already had. */
+                int center_x = edge_sx[pi];
+                int center_y = (cur_edge[pi] == EDGE_TOP)
+                                    ? edge_sy[pi] + (int)lroundf(gap_px) + stw / 2
+                                    : edge_sy[pi] - (int)lroundf(gap_px) - stw / 2;
+                text_util_draw_scaled_rotated(renderer, font_large, p->name, center_x, center_y, LABEL_COLOR,
+                                               pin_scale, -90.0f);
+            }
         }
     } else if (font_large != NULL) {
         /* pins are too small to label individually - show one big name
-           instead, running along the body's long (vertical) axis since the
-           DIP body is always narrow (see ic_dip_body_size). No lower cell
-           bound here - it should keep shrinking along with everything else
-           instead of disappearing once zoomed out past some fixed cutoff. */
+           instead, running along the body's long axis (see ic_dip_body_size -
+           vertical at rotation 0/180, horizontal at 90/270 since w/h swap
+           with it, same as the body itself). No lower cell bound here - it
+           should keep shrinking along with everything else instead of
+           disappearing once zoomed out past some fixed cutoff. */
         int tw, th;
         text_util_measure(font_large, def->name, &tw, &th);
         if (tw > 0 && th > 0) {
             float fit_by_length = (h * 0.6f) / tw;    /* text width becomes the vertical extent once rotated */
             float fit_by_thickness = (w * 0.6f) / th; /* text height becomes the horizontal extent once rotated */
             float name_scale = fit_by_length < fit_by_thickness ? fit_by_length : fit_by_thickness;
+            float text_angle = (c->rotation & 1) ? 0.0f : -90.0f;
             if (name_scale > 0.0f) {
                 text_util_draw_scaled_rotated(renderer, font_large, def->name, sx + w / 2, sy + h / 2,
-                                               IC_NAME_LABEL_COLOR, name_scale, -90.0f);
+                                               IC_NAME_LABEL_COLOR, name_scale, text_angle);
             }
         }
     }
@@ -668,21 +757,43 @@ static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam,
     }
 }
 
+/* Every wire-drawing pass in render_circuit below iterates wires in THIS
+   order rather than plain array index - layer_order[0] is the topmost layer
+   visually (see circuit.h's own comment on layer_order), so its wires must
+   be the LAST ones drawn, painting over anything from a lower layer
+   wherever two wires happen to cross on screen, the same way a real board's
+   copper layers physically stack. Built once per frame and reused by every
+   pass (line, terminal, dots, endpoint marks) so they all agree on the same
+   stacking instead of only the line itself respecting it. */
+static int build_wire_draw_order(const Circuit *circuit, int *out_order, int max_out) {
+    int n = 0;
+    for (int pos = circuit->layer_order_count - 1; pos >= 0 && n < max_out; pos--) {
+        int slot = circuit->layer_order[pos];
+        for (int i = 0; i < circuit->wire_high_water && n < max_out; i++) {
+            if (!circuit->wires[i].in_use || circuit->wires[i].layer_slot != slot) continue;
+            out_order[n++] = i;
+        }
+    }
+    return n;
+}
+
 void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit *circuit, const Camera *cam,
                      const DiagnosticSet *diagnostics, int layer_preview,
                      int highlight_component_a, int highlight_wire_a,
                      int highlight_component_b, int highlight_wire_b) {
+    int wire_order[MAX_WIRES];
+    int wire_order_n = build_wire_draw_order(circuit, wire_order, MAX_WIRES);
+
     /* pass 1: lines, terminals and component bodies */
-    for (int i = 0; i < circuit->wire_high_water; i++) {
+    for (int oi = 0; oi < wire_order_n; oi++) {
+        int i = wire_order[oi];
         const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
         int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
         render_wire_line(renderer, cam, circuit, w, i, circuit->wire_values[i], highlighted, diagnostics, layer_preview);
     }
-    for (int i = 0; i < circuit->wire_high_water; i++) {
-        const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
-        render_wire_terminal(renderer, font_large, cam, w, circuit->wire_values[i]);
+    for (int oi = 0; oi < wire_order_n; oi++) {
+        const Wire *w = &circuit->wires[wire_order[oi]];
+        render_wire_terminal(renderer, font_large, cam, w, circuit->wire_values[wire_order[oi]]);
     }
     for (int i = 0; i < circuit->component_high_water; i++) {
         const Component *c = &circuit->components[i];
@@ -691,11 +802,11 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         render_ic_body(renderer, font_large, cam, c, highlighted);
     }
 
-    /* pass 2: connection dots on top, so no line/stub can slice through one */
-    for (int i = 0; i < circuit->wire_high_water; i++) {
-        const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
-        render_wire_dots(renderer, cam, circuit, w);
+    /* pass 2: connection dots on top, so no line/stub can slice through one -
+       same layer-stacked order as pass 1, so a dot from a topmost-layer wire
+       still wins over a lower-layer wire's line/dot passing underneath it. */
+    for (int oi = 0; oi < wire_order_n; oi++) {
+        render_wire_dots(renderer, cam, circuit, &circuit->wires[wire_order[oi]]);
     }
     for (int i = 0; i < circuit->component_high_water; i++) {
         const Component *c = &circuit->components[i];
@@ -704,9 +815,9 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
     render_junctions(renderer, cam, circuit);
     render_vias(renderer, cam, circuit);
 
-    for (int i = 0; i < circuit->wire_high_water; i++) {
+    for (int oi = 0; oi < wire_order_n; oi++) {
+        int i = wire_order[oi];
         const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
         int highlighted = (i == highlight_wire_a || i == highlight_wire_b);
         render_wire_endpoint_marks(renderer, cam, w, highlighted);
     }
@@ -753,7 +864,7 @@ void render_diagnostic_highlights(SDL_Renderer *renderer, const Camera *cam, con
 #define DIAG_CHIP_PAD_X 10
 #define DIAG_CHIP_MARGIN 8
 
-int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_h,
+int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_w, int window_h,
                               const DiagnosticSet *diagnostics, int hover_x, int hover_y) {
     if (font == NULL) return -1;
     int hovered = -1;
@@ -768,11 +879,20 @@ int render_diagnostics_panel(SDL_Renderer *renderer, TTF_Font *font, int window_
         text_util_measure(font, d->summary, &tw, &th);
         SDL_Rect chip = { x, y, tw + DIAG_CHIP_PAD_X * 2, DIAG_CHIP_H };
 
+        /* stop once this chip (or the next one after it) wouldn't fully fit
+           before the window's right edge, rather than spilling past it or
+           running under whatever's docked there - see the header comment. */
+        if (chip.x + chip.w + DIAG_CHIP_MARGIN > window_w) break;
+
         int is_hovered = (hover_x >= chip.x && hover_x < chip.x + chip.w &&
                            hover_y >= chip.y && hover_y < chip.y + chip.h);
         if (is_hovered) hovered = i;
 
-        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, is_hovered ? 255 : 220);
+        /* fully opaque - this sits below the Manage Data/Layers panels now
+           (see app.c's render order), so it no longer needs to read as a
+           translucent overlay above the canvas the way it did when it was
+           the very last thing drawn. */
+        SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
         SDL_RenderFillRect(renderer, &chip);
         SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
         SDL_RenderDrawRect(renderer, &chip);

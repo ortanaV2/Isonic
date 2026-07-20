@@ -48,9 +48,37 @@ void component_init_ic(Component *c, int grid_x, int grid_y, const IC_Def *def) 
     }
 }
 
+/* Rotates a local offset (relative to the component's own origin, in its
+   natural unrotated orientation) by `steps` quarter turns counterclockwise,
+   re-deriving the natural body size (base_w/base_h) at each step so the
+   result stays relative to the CURRENT (already-rotated-so-far) bounding
+   box's top-left corner instead of drifting into negative coordinates - same
+   requirement component_get_size's swapped w/h already assumes. One step is
+   (x,y) -> (y, base_w - x): this maps every corner of the base_w x base_h
+   rectangle to a corner of the base_h x base_w rectangle with its own
+   top-left back at the origin (checked against all 4 corners by hand - see
+   the design discussion this was built from). Applying it `steps` times
+   (0-3, wrapped) composes to 90/180/270 degrees. */
+static void rotate_local_offset(int x, int y, int base_w, int base_h, int steps, int *out_x, int *out_y) {
+    int cw = base_w, ch = base_h;
+    for (int i = 0; i < (steps & 3); i++) {
+        int nx = y;
+        int ny = cw - x;
+        x = nx;
+        y = ny;
+        int t = cw; cw = ch; ch = t;
+    }
+    *out_x = x;
+    *out_y = y;
+}
+
 void component_pin_world_pos(const Component *c, int pin_index, int *out_x, int *out_y) {
-    *out_x = c->grid_x + c->pins[pin_index].local_dx;
-    *out_y = c->grid_y + c->pins[pin_index].local_dy;
+    int base_w, base_h;
+    ic_dip_body_size(c->ic_def->pin_count, &base_w, &base_h);
+    int rx, ry;
+    rotate_local_offset(c->pins[pin_index].local_dx, c->pins[pin_index].local_dy, base_w, base_h, c->rotation, &rx, &ry);
+    *out_x = c->grid_x + rx;
+    *out_y = c->grid_y + ry;
 }
 
 int component_find_pin_at(const Component *c, int x, int y) {
@@ -66,4 +94,7 @@ int component_find_pin_at(const Component *c, int x, int y) {
 
 void component_get_size(const Component *c, int *out_w, int *out_h) {
     ic_dip_body_size(c->ic_def->pin_count, out_w, out_h);
+    if (c->rotation & 1) {
+        int t = *out_w; *out_w = *out_h; *out_h = t;
+    }
 }

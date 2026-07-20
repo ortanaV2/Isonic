@@ -172,6 +172,7 @@ static void copy_selected_component(App *app) {
     cancel_transient_actions(app); /* clean slate - drop any wiring/drag/marquee in progress first */
     app->clipboard_ic_def = found->ic_def;
     app->pasting = 1;
+    app->place_rotation = 0;
 }
 
 static void set_active_tool(App *app, Tool tool) {
@@ -232,6 +233,7 @@ static int handle_taskbar_click(App *app, int mx, int my) {
     if (kind == TASKBAR_CLICK_IC) {
         set_active_tool(app, TOOL_PLACE_IC);
         app->place_ic_name = ic_name;
+        app->place_rotation = 0;
         return 1;
     }
     if (kind == TASKBAR_CLICK_FILE_MENU_ITEM) {
@@ -623,9 +625,11 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     if (place_def != NULL) {
         int w, h;
         ic_dip_body_size(place_def->pin_count, &w, &h);
+        if (app->place_rotation & 1) { int t = w; w = h; h = t; }
         if (!circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1)) {
             int new_id = circuit_add_ic(&app->circuit, gx, gy, place_def);
             if (new_id >= 0) {
+                app->circuit.components[new_id].rotation = app->place_rotation;
                 select_component(app, new_id);
                 push_undo(app);
             }
@@ -962,6 +966,13 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 set_active_tool(app, TOOL_INPUT);
             } else if (sc == app->settings.keybind[KEYBIND_OUTPUT]) {
                 set_active_tool(app, TOOL_OUTPUT);
+            } else if (sc == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
+                /* only meaningful while a placement (Components-menu pick or
+                   Ctrl+C paste) is actually pending - see place_rotation in
+                   app.h. Not a structural edit itself (nothing's been placed
+                   yet), so no push_undo here; the placed component's baked-in
+                   rotation is what the eventual undo snapshot covers. */
+                app->place_rotation = (app->place_rotation + 1) & 3;
             } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
                 /* picks which layer new wires route on - a plain field
                    assignment, not structural, so no undo_push (see

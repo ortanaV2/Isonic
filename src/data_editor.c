@@ -26,7 +26,7 @@
 #define SCROLLBAR_MIN_THUMB_H 20
 #define CLOSE_X_THICKNESS 1.8f
 
-static const SDL_Color BG_COLOR = { 32, 32, 36, 245 };
+static const SDL_Color BG_COLOR = { 32, 32, 36, 255 }; /* #202024, opaque - matches layer_panel.c/settings_panel.c */
 static const SDL_Color BORDER_COLOR = { 20, 20, 22, 255 };
 static const SDL_Color ADDR_COLOR = { 140, 140, 146, 255 }; /* dim/read-only, same as render.c's OUTPUT_LABEL_COLOR */
 static const SDL_Color HEADER_COLOR = { 190, 190, 196, 255 };
@@ -172,8 +172,12 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
     de->panel_rect = (SDL_Rect){ window_w - PANEL_W, TASKBAR_HEIGHT, PANEL_W, window_h - TASKBAR_HEIGHT };
     SDL_SetRenderDrawColor(renderer, BG_COLOR.r, BG_COLOR.g, BG_COLOR.b, BG_COLOR.a);
     SDL_RenderFillRect(renderer, &de->panel_rect);
-    SDL_SetRenderDrawColor(renderer, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 255);
-    SDL_RenderDrawRect(renderer, &de->panel_rect);
+    /* the outer border itself is drawn LAST (see the bottom of this
+       function) - same reasoning as layer_panel.c's identical pattern: the
+       current-address row highlight below fills edge-to-edge like every row
+       in that panel does, and drawing the border first just let that full-
+       width fill paint straight over its side pixels, reading as the
+       highlight "poking out" of the panel by 1px. */
 
     int col_dec_x = de->panel_rect.x + ROW_PAD_X;
     int col_hex_x = col_dec_x + ADDR_DEC_W + ROW_PAD_X;
@@ -240,12 +244,25 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
     SDL_RenderFillRect(renderer, &de->thumb_rect);
 
     unsigned char *mem = ic_at28c64b_memory(de->editing);
-    if (mem == NULL) return;
+    int cur_addr = (mem != NULL) ? ic_at28c64b_current_address(de->editing) : -1;
 
-    for (int row = 0; row < de->visible_rows; row++) {
+    for (int row = 0; mem != NULL && row < de->visible_rows; row++) {
         int addr = de->scroll_row + row;
         if (addr >= AT28C64B_SIZE) break;
         int ry = de->body_rect.y + row * de->row_h;
+
+        if (addr == cur_addr) {
+            /* the byte currently sitting on A0..A12 - same shade as "+ Add
+               Layer"'s idle background (layer_panel.c's BUTTON_BG), lighter
+               than the panel itself so it reads as a highlight without
+               fighting the bit-box/hover colors drawn on top of it below.
+               Stops at the scrollbar's own left edge instead of running the
+               full panel width, so it never paints over the track/thumb
+               sitting there. */
+            SDL_Rect row_bg = { de->panel_rect.x, ry, de->scrollbar_rect.x - de->panel_rect.x, de->row_h };
+            SDL_SetRenderDrawColor(renderer, BIT_BG.r, BIT_BG.g, BIT_BG.b, 255);
+            SDL_RenderFillRect(renderer, &row_bg);
+        }
 
         if (font != NULL) {
             /* buffers sized well above GCC's own worst-case estimate for a
@@ -278,6 +295,12 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
             }
         }
     }
+
+    /* drawn last (on top of every row fill above, including the
+       current-address highlight) so it's always a crisp, unbroken frame -
+       see the comment where the fill itself happens, near the top. */
+    SDL_SetRenderDrawColor(renderer, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 255);
+    SDL_RenderDrawRect(renderer, &de->panel_rect);
 }
 
 int data_editor_covers_point(const DataEditor *de, int x, int y) {

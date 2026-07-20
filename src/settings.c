@@ -6,14 +6,14 @@
 #include "platform_win32.h"
 
 static const char *k_action_labels[KEYBIND_ACTION_COUNT] = {
-    "Wire Tool", "Via Tool", "Select Tool", "Input Tool", "Output Tool", "Copy", "Undo", "Redo",
+    "Wire Tool", "Via Tool", "Select Tool", "Input Tool", "Output Tool", "Copy", "Undo", "Redo", "Rotate",
 };
 
 /* File key for each action, in the same order as KeybindAction - shared by
    settings_load/settings_save so the two stay in lockstep by construction. */
 static const char *k_action_keys[KEYBIND_ACTION_COUNT] = {
     "keybind_wire", "keybind_via", "keybind_select", "keybind_input", "keybind_output",
-    "keybind_copy", "keybind_undo", "keybind_redo",
+    "keybind_copy", "keybind_undo", "keybind_redo", "keybind_rotate",
 };
 
 const char *keybind_action_label(KeybindAction action) {
@@ -32,6 +32,7 @@ void settings_defaults(Settings *settings) {
     settings->keybind[KEYBIND_COPY] = SDL_SCANCODE_C;
     settings->keybind[KEYBIND_UNDO] = SDL_SCANCODE_Z;
     settings->keybind[KEYBIND_REDO] = SDL_SCANCODE_Y;
+    settings->keybind[KEYBIND_ROTATE] = SDL_SCANCODE_R;
 }
 
 void settings_load(Settings *settings) {

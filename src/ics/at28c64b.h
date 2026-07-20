@@ -19,4 +19,12 @@ int ic_at28c64b_is(const Component *c);
    bypassing pin-level read/write. */
 unsigned char *ic_at28c64b_memory(Component *c);
 
+/* The address currently sitting on A0..A12 (same decode as the simulation's
+   own eval(), see at28c64b_address in at28c64b.c), read from this
+   component's cached Pin.value rather than a live SignalValue* bus - purely
+   for the "Manage Data" editor to highlight which row is currently
+   addressed (data_editor.c), independent of CE#/OE#/WE# actually driving it
+   out to the bus. -1 if c isn't an AT28C64B-15PU. */
+int ic_at28c64b_current_address(const Component *c);
+
 #endif

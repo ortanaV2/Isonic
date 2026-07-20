@@ -21,13 +21,18 @@
 #define NAME_GAP 6
 #define BUTTON_CLUSTER_W (BTN_SIZE * 3 + BTN_GAP * 2)
 #define MIN_NAME_W 60        /* keeps the panel from looking cramped even when every name is short ("GND", "+5V") */
-/* extra gap after the header separator before the first row starts, so it
-   matches the gap between any two rows' own buttons - a row's button sits
-   (ROW_H-BTN_SIZE)/2 below its own top edge, and the row below it starts
-   another (ROW_H-BTN_SIZE)/2 further before its own button, so two
-   consecutive rows' buttons end up that same amount apart twice over;
-   without this, the header-to-first-row gap is only half that. */
-#define HEADER_ROW_GAP ((ROW_H - BTN_SIZE) / 2)
+/* extra gap after the header separator before the first row starts. The base
+   (ROW_H-BTN_SIZE)/2 matches the gap between any two rows' own buttons - a
+   row's button sits (ROW_H-BTN_SIZE)/2 below its own top edge, and the row
+   below it starts another (ROW_H-BTN_SIZE)/2 further before its own button,
+   so two consecutive rows' buttons end up that same amount apart twice over;
+   without the base term alone, the header-to-first-row gap would only be
+   half that. The extra +2 on top brings the active row's highlight down to
+   the exact same y data_editor.c's own header-to-first-row gap (HEADER_H +
+   HEADER_BODY_GAP) puts its current-address highlight at, so the two
+   panels' row highlights line up when both are open side by side - without
+   it the Layers panel's highlight sat 2px higher. */
+#define HEADER_ROW_GAP (((ROW_H - BTN_SIZE) / 2) + 2)
 
 #define CLOSE_X_THICKNESS 1.8f  /* matches data_editor.c's own close-X stroke weight exactly */
 
@@ -41,7 +46,7 @@
    boxes get a fill and the rest of a row sits directly on the panel's own
    BG_COLOR - except the active layer's row, which does (see
    ROW_BG_ACTIVE below). */
-static const SDL_Color BG_COLOR = { 32, 32, 36, 245 };
+static const SDL_Color BG_COLOR = { 32, 32, 36, 255 }; /* #202024, opaque - matches data_editor.c/settings_panel.c */
 static const SDL_Color BORDER_COLOR = { 20, 20, 22, 255 };
 static const SDL_Color HEADER_COLOR = { 190, 190, 196, 255 };
 static const SDL_Color TEXT_COLOR = { 225, 225, 230, 255 };          /* == data_editor's BIT_TEXT_COLOR */

@@ -97,16 +97,25 @@ typedef enum {
 void taskbar_init(Taskbar *tb);
 /* Recomputes button rects; call whenever the window is resized. */
 void taskbar_layout(Taskbar *tb, int window_w);
-/* active_ic_name (may be NULL) highlights the matching dropdown row, same
-   idea as active_tool highlighting its button. hover_x/hover_y (current
-   mouse position) additionally lights up whichever dropdown row - category
-   or item - the cursor is directly over, while the dropdown is open. Both
-   the "File" and "Settings" hover tooltips are suppressed together while
-   the File dropdown is open (it visually sits right behind both buttons) -
-   the separate, centered Settings popup does NOT suppress them, since it
-   doesn't sit behind either button. */
-void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool active_tool, const char *active_ic_name,
-                     int hover_x, int hover_y);
+/* Just the bar itself (File/Settings/tool buttons, hover tooltips) - not
+   either dropdown, see taskbar_render_dropdowns below for those. hover_x/
+   hover_y (current mouse position) lights up whichever button the cursor is
+   directly over. Both the "File" and "Settings" hover tooltips are
+   suppressed together while the File dropdown is open (it visually sits
+   right behind both buttons) - the separate, centered Settings popup does
+   NOT suppress them, since it doesn't sit behind either button. */
+void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool active_tool, int hover_x, int hover_y);
+/* The File and (if open) Components dropdown panels, split out of
+   taskbar_render above so the caller can draw them in a separate, later pass
+   - dropdowns need to be the app's topmost layer (short of the Settings
+   modal), but the taskbar bar itself renders first, before the Manage Data/
+   Layers panels; call this AFTER those so an open dropdown never ends up
+   tucked behind either one. active_ic_name (may be NULL) highlights the
+   matching Components row, same idea as taskbar_render's active_tool
+   highlighting its button; hover_x/hover_y light up whichever dropdown row -
+   category or item - the cursor is directly over. */
+void taskbar_render_dropdowns(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, const char *active_ic_name,
+                               int hover_x, int hover_y);
 /* Frees the cached label textures; call once at shutdown. */
 void taskbar_shutdown(Taskbar *tb);
 

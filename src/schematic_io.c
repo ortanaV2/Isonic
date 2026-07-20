@@ -71,8 +71,8 @@ int schematic_save(const Circuit *circuit, const char *path) {
 
         char seq_hex[IC_SEQ_STATE_BYTES * 2 + 1];
         kv_hex_encode(c->seq_state, IC_SEQ_STATE_BYTES, seq_hex);
-        snprintf(line, sizeof(line), "component ic=%s x=%d y=%d seq=%s",
-                 c->ic_def->name, c->grid_x, c->grid_y, seq_hex);
+        snprintf(line, sizeof(line), "component ic=%s x=%d y=%d rot=%d seq=%s",
+                 c->ic_def->name, c->grid_x, c->grid_y, c->rotation, seq_hex);
         kv_write_line(f, line);
 
         if (ic_at28c64b_is(c)) {
@@ -181,7 +181,7 @@ int schematic_load(Circuit *circuit, const char *path) {
         } else if (strcmp(keyword, "component") == 0) {
             char tok[64], key[32], val[64];
             char ic_name[64] = "";
-            int x = 0, y = 0;
+            int x = 0, y = 0, rot = 0;
             unsigned char seq[IC_SEQ_STATE_BYTES];
             memset(seq, 0, sizeof(seq));
             while (kv_next_token(&cursor, tok, sizeof(tok))) {
@@ -192,6 +192,9 @@ int schematic_load(Circuit *circuit, const char *path) {
                 }
                 else if (strcmp(key, "x") == 0) x = atoi(val);
                 else if (strcmp(key, "y") == 0) y = atoi(val);
+                /* absent on a file saved before rotation existed - rot stays
+                   0, the same "natural" orientation those files always meant */
+                else if (strcmp(key, "rot") == 0) rot = atoi(val);
                 else if (strcmp(key, "seq") == 0) kv_hex_decode(val, seq, IC_SEQ_STATE_BYTES);
             }
 
@@ -204,6 +207,7 @@ int schematic_load(Circuit *circuit, const char *path) {
             int id = circuit_add_ic(circuit, x, y, def);
             if (id >= 0) {
                 Component *c = &circuit->components[id];
+                c->rotation = rot & 3;
                 memcpy(c->seq_state, seq, IC_SEQ_STATE_BYTES);
                 if (ic_at28c64b_is(c)) {
                     /* The AT28C64B memory pool is a process-lifetime global -

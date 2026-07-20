@@ -87,6 +87,8 @@ independent of any schematic file.
 - **Space** — switch to Select mode
 - **Q** — switch to the Input tool
 - **E** — switch to the Output tool
+- **R** — while an IC is pending placement (Components menu or Ctrl+C paste),
+  rotate it 90° counterclockwise before dropping it
 - **1-9** — pick which layer new wires route on
 - **Shift (hold)** — preview all layers at once; **Ctrl+Shift** toggles that
   preview locked on/off
