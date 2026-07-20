@@ -24,6 +24,8 @@ const char *keybind_action_label(KeybindAction action) {
 void settings_defaults(Settings *settings) {
     settings->autosave_minutes = 0;
     settings->layer_panel_anchor_left = 0;
+    settings->diag_chips_enabled = 1;
+    settings->diag_hover_enabled = 1;
     settings->keybind[KEYBIND_WIRE] = SDL_SCANCODE_W;
     /* was V - collided with Ctrl+V once Paste got its own keybind below
        (the plain-key checks never excluded Ctrl, so Ctrl+V would also
@@ -63,6 +65,10 @@ void settings_load(Settings *settings) {
             settings->autosave_minutes = atoi(val);
         } else if (strcmp(key, "layer_panel_anchor_left") == 0) {
             settings->layer_panel_anchor_left = atoi(val);
+        } else if (strcmp(key, "diag_chips_enabled") == 0) {
+            settings->diag_chips_enabled = atoi(val);
+        } else if (strcmp(key, "diag_hover_enabled") == 0) {
+            settings->diag_hover_enabled = atoi(val);
         } else {
             for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
                 if (strcmp(key, k_action_keys[i]) == 0) {
@@ -87,6 +93,10 @@ int settings_save(const Settings *settings) {
     snprintf(line, sizeof(line), "autosave_minutes=%d", settings->autosave_minutes);
     kv_write_line(f, line);
     snprintf(line, sizeof(line), "layer_panel_anchor_left=%d", settings->layer_panel_anchor_left);
+    kv_write_line(f, line);
+    snprintf(line, sizeof(line), "diag_chips_enabled=%d", settings->diag_chips_enabled);
+    kv_write_line(f, line);
+    snprintf(line, sizeof(line), "diag_hover_enabled=%d", settings->diag_hover_enabled);
     kv_write_line(f, line);
     for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
         snprintf(line, sizeof(line), "%s=%d", k_action_keys[i], (int)settings->keybind[i]);

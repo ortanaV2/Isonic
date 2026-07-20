@@ -415,6 +415,28 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
    also skipped - they're translated wholesale by the caller instead (see
    DRAG_SELECTION in app_handle_event), so picking them up here too would
    double-move them by the same per-frame delta. */
+/* True if wire_id's given end is already recorded - anchors can legitimately
+   coincide (e.g. begin_selection_drag feeds one anchor per endpoint of every
+   selected wire, and two selected wires meeting at the same junction point
+   contribute the SAME point twice), and without this check a third,
+   unselected wire ending at that shared point would get appended to the
+   attachment list once per matching anchor instead of once overall -
+   apply_drag_attachments would then add that frame's dx/dy to it multiple
+   times, moving it 2x (or more, with more coincident anchors/wires) as far
+   as everything actually being dragged. */
+static int drag_attach_wire_recorded(const App *app, int wire_id, int end) {
+    for (int i = 0; i < app->drag_attach_count; i++) {
+        if (app->drag_attach_wire_id[i] == wire_id && app->drag_attach_wire_end[i] == end) return 1;
+    }
+    return 0;
+}
+static int drag_attach_via_recorded(const App *app, int via_id) {
+    for (int i = 0; i < app->drag_attach_via_count; i++) {
+        if (app->drag_attach_via_id[i] == via_id) return 1;
+    }
+    return 0;
+}
+
 static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int anchor_count, int exclude_wire_id) {
     app->drag_attach_count = 0;
     app->drag_attach_via_count = 0;
@@ -424,12 +446,13 @@ static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int an
             if (wi == exclude_wire_id) continue;
             Wire *w = &app->circuit.wires[wi];
             if (!w->in_use || w->selected) continue;
-            if (w->from_x == px && w->from_y == py) {
+            if (w->from_x == px && w->from_y == py && !drag_attach_wire_recorded(app, wi, 0)) {
                 app->drag_attach_wire_id[app->drag_attach_count] = wi;
                 app->drag_attach_wire_end[app->drag_attach_count] = 0;
                 app->drag_attach_count++;
             }
-            if (app->drag_attach_count < MAX_DRAG_ATTACHMENTS && w->to_x == px && w->to_y == py) {
+            if (app->drag_attach_count < MAX_DRAG_ATTACHMENTS && w->to_x == px && w->to_y == py &&
+                !drag_attach_wire_recorded(app, wi, 1)) {
                 app->drag_attach_wire_id[app->drag_attach_count] = wi;
                 app->drag_attach_wire_end[app->drag_attach_count] = 1;
                 app->drag_attach_count++;
@@ -441,6 +464,7 @@ static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int an
         for (int vi = 0; vi < app->circuit.via_high_water && app->drag_attach_via_count < MAX_DRAG_ATTACHMENTS; vi++) {
             Via *v = &app->circuit.vias[vi];
             if (!v->in_use || v->x != px || v->y != py) continue;
+            if (drag_attach_via_recorded(app, vi)) continue;
             app->drag_attach_via_id[app->drag_attach_via_count] = vi;
             app->drag_attach_via_count++;
         }
@@ -537,6 +561,66 @@ static int selection_count(const App *app) {
         if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) n++;
     }
     return n;
+}
+
+/* Recomputes the singular tracked ids (selected_component_id, ...) from
+   scratch after a Ctrl+click toggle - same "ambiguous means -1, otherwise
+   point at the sole survivor" rule clear_selection/marquee-select already
+   established (see clear_selection's own comment above), so anything relying
+   on exactly one thing being selected (Ctrl+C copy, Manage Data eligibility,
+   double-click rename, ...) keeps working the same regardless of whether
+   that single survivor got there via a plain click or a Ctrl+click toggle. */
+static void resync_singular_selection_ids(App *app) {
+    app->selected_component_id = -1;
+    app->selected_wire_id = -1;
+    app->selected_section_id = -1;
+    app->selected_text_label_id = -1;
+    if (selection_count(app) != 1) return;
+    for (int i = 0; i < app->circuit.component_high_water; i++) {
+        if (app->circuit.components[i].in_use && app->circuit.components[i].selected) {
+            app->selected_component_id = i;
+            return;
+        }
+    }
+    for (int i = 0; i < app->circuit.wire_high_water; i++) {
+        if (app->circuit.wires[i].in_use && app->circuit.wires[i].selected) {
+            app->selected_wire_id = i;
+            return;
+        }
+    }
+    for (int i = 0; i < app->circuit.section_high_water; i++) {
+        if (app->circuit.sections[i].in_use && app->circuit.sections[i].selected) {
+            app->selected_section_id = i;
+            return;
+        }
+    }
+    for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+        if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) {
+            app->selected_text_label_id = i;
+            return;
+        }
+    }
+}
+
+/* Ctrl+click toggle-select: adds/removes exactly one item from whatever else
+   is already selected, instead of collapsing the whole selection down to
+   just this one item like a plain click does (see select_component and
+   friends above) - see handle_left_click's ctrl_held branches. */
+static void toggle_component_selected(App *app, int id) {
+    app->circuit.components[id].selected = !app->circuit.components[id].selected;
+    resync_singular_selection_ids(app);
+}
+static void toggle_wire_selected(App *app, int id) {
+    app->circuit.wires[id].selected = !app->circuit.wires[id].selected;
+    resync_singular_selection_ids(app);
+}
+static void toggle_section_selected(App *app, int id) {
+    app->circuit.sections[id].selected = !app->circuit.sections[id].selected;
+    resync_singular_selection_ids(app);
+}
+static void toggle_text_label_selected(App *app, int id) {
+    app->circuit.text_labels[id].selected = !app->circuit.text_labels[id].selected;
+    resync_singular_selection_ids(app);
 }
 
 /* Moving a multi-item selection (marquee or otherwise) drags every already-
@@ -981,7 +1065,8 @@ static void paste_clipboard(App *app) {
 /* double_click gates starting a Section-label/Text-Label rename - a plain
    click just selects, same "single click selects, double click renames"
    split layer_panel.c's own name field uses. */
-static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx, float fy, int double_click) {
+static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx, float fy, int double_click,
+                               int ctrl_held) {
     /* clicking an Input's H/L label always toggles it, no matter what tool is
        active or what else that click would otherwise do */
     int input_wire_id = find_input_terminal_at(app, mx, my);
@@ -1089,6 +1174,8 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
                 snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", s->label);
                 app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
                 SDL_StartTextInput();
+            } else if (ctrl_held) {
+                toggle_section_selected(app, label_section_id);
             } else {
                 select_section(app, label_section_id);
             }
@@ -1106,6 +1193,8 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
             snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", t->text);
             app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
             SDL_StartTextInput();
+        } else if (ctrl_held) {
+            toggle_text_label_selected(app, text_label_id);
         } else if (t->selected && selection_count(app) > 1) {
             begin_selection_drag(app, gx, gy, -1, -1, -1, text_label_id);
         } else {
@@ -1132,7 +1221,9 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         /* clicking a component that's already part of a multi-item selection
            drags the whole selection, instead of collapsing it down to just
            this one component (see begin_selection_drag) */
-        if (app->circuit.components[comp_id].selected && selection_count(app) > 1) {
+        if (ctrl_held) {
+            toggle_component_selected(app, comp_id);
+        } else if (app->circuit.components[comp_id].selected && selection_count(app) > 1) {
             begin_selection_drag(app, gx, gy, comp_id, -1, -1, -1);
         } else {
             begin_component_drag(app, comp_id, gx, gy);
@@ -1142,7 +1233,9 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
 
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
-        if (app->circuit.wires[wire_id].selected && selection_count(app) > 1) {
+        if (ctrl_held) {
+            toggle_wire_selected(app, wire_id);
+        } else if (app->circuit.wires[wire_id].selected && selection_count(app) > 1) {
             begin_selection_drag(app, gx, gy, -1, wire_id, -1, -1);
         } else {
             begin_wire_body_drag(app, wire_id, gx, gy);
@@ -1158,7 +1251,9 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     int box_section_id = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (box_section_id >= 0 && !app->circuit.sections[box_section_id].locked) {
         Section *s = &app->circuit.sections[box_section_id];
-        if (s->selected && selection_count(app) > 1) {
+        if (ctrl_held) {
+            toggle_section_selected(app, box_section_id);
+        } else if (s->selected && selection_count(app) > 1) {
             begin_selection_drag(app, gx, gy, -1, -1, box_section_id, -1);
         } else {
             begin_section_body_drag(app, box_section_id, gx, gy);
@@ -1168,6 +1263,12 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     /* a LOCKED section is fully non-interactive here (not even selectable -
        see circuit.h's Section comment) - falls through to whatever's below
        instead of returning, same as if nothing were hit at all. */
+
+    /* Ctrl+click on truly empty space leaves the current selection alone
+       instead of starting a rubber-band box - a marquee always clears first
+       (see begin_marquee_select), which would fight the "build up a
+       selection one Ctrl+click at a time" purpose Ctrl held here signals. */
+    if (ctrl_held) return;
 
     /* nothing under the cursor - start a rubber-band selection box instead of
        just clearing the selection outright (a plain click with no drag still
@@ -1322,7 +1423,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
             camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (app->active_tool == TOOL_VIA) handle_via_tool_click(app, fx, fy);
-                else handle_left_click(app, mx, my, gx, gy, fx, fy, event->button.clicks >= 2);
+                else handle_left_click(app, mx, my, gx, gy, fx, fy, event->button.clicks >= 2,
+                                        (SDL_GetModState() & KMOD_CTRL) != 0);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 1;
             } else if (event->button.button == SDL_BUTTON_RIGHT) {
@@ -1594,6 +1696,21 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_KEYUP: {
             SDL_Scancode sc = event->key.keysym.scancode;
+            /* mirrors the exact same "keyboard is owned elsewhere" gates
+               SDL_KEYDOWN above already checks before ever reaching its own
+               Shift/Ctrl chord handling (Settings modal open, layer rename
+               field, Section/Text-Label edit in progress) - without this,
+               releasing Shift while e.g. typing a capital letter into a
+               label would still run the logic below (only the KEYDOWN side
+               was gated), which - if the all-layers preview happened to
+               already be locked on from earlier, unrelated to this edit -
+               would silently unlock it out from under the user just because
+               a Shift key-up occurred while text input was capturing every
+               other key. */
+            if (app->settings_panel.open || layer_panel_is_editing(&app->layer_panel) ||
+                app->canvas_edit_kind != CANVAS_EDIT_NONE) {
+                break;
+            }
             if (sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) {
                 app->shift_held = 0;
                 /* a lone Shift tap/hold (never chorded with Ctrl) toggles

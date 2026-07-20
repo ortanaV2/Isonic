@@ -26,6 +26,11 @@ typedef enum {
 typedef struct {
     int autosave_minutes;        /* 0 = disabled */
     int layer_panel_anchor_left; /* 0 = right (today's fixed behavior), 1 = left */
+    int diag_chips_enabled;      /* 0 hides the bottom-left error/warning chip stack entirely */
+    int diag_hover_enabled;      /* 0 suppresses the description tooltip shown while hovering a
+                                     chip or a flagged wire/pin on the canvas - the colored
+                                     highlight dots themselves (render_diagnostic_highlights)
+                                     stay regardless, only the text popup is gated by this */
     SDL_Scancode keybind[KEYBIND_ACTION_COUNT];
 } Settings;
 

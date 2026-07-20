@@ -500,8 +500,14 @@ void app_render(App *app, SDL_Renderer *renderer) {
        width to that panel's left edge when it's open, same one-frame-stale
        panel_rect read layer_panel_right_margin below already relies on. */
     int diag_max_x = app->data_editor.open ? app->data_editor.panel_rect.x : app->window_w;
-    int panel_hover = render_diagnostics_panel(renderer, app->font, diag_max_x, app->window_h, &app->diagnostics,
+    /* Settings' "Error/Warning Chips" toggle - off skips drawing the chip
+       stack entirely, rather than just hiding it, so there's also nothing
+       left there for the hover-tooltip lookup below to find. */
+    int panel_hover = -1;
+    if (app->settings.diag_chips_enabled) {
+        panel_hover = render_diagnostics_panel(renderer, app->font, diag_max_x, app->window_h, &app->diagnostics,
                                                 outside_hover_mx, outside_hover_my);
+    }
 
     data_editor_render(renderer, app->font, &app->data_editor, manage_data_eligible, &app->taskbar,
                         app->window_w, app->window_h, outside_hover_mx, outside_hover_my);
@@ -513,7 +519,15 @@ void app_render(App *app, SDL_Renderer *renderer) {
                         app->window_w, app->window_h, layer_panel_right_margin, app->settings.layer_panel_anchor_left,
                         outside_hover_mx, outside_hover_my);
 
-    int hovered_diag = (panel_hover >= 0) ? panel_hover : find_diagnostic_hover_at(app, outside_hover_mx, outside_hover_my);
+    /* Settings' "Error/Warning Hover Descriptions" toggle - independent of
+       the chip toggle above, since a flagged wire/pin on the canvas itself
+       can still be hovered for a description even with the chip stack
+       turned off (render_diagnostic_highlights' colored dots aren't gated
+       by either setting, only this text popup is). */
+    int hovered_diag = -1;
+    if (app->settings.diag_hover_enabled) {
+        hovered_diag = (panel_hover >= 0) ? panel_hover : find_diagnostic_hover_at(app, outside_hover_mx, outside_hover_my);
+    }
     if (hovered_diag >= 0) {
         render_diagnostic_tooltip(renderer, app->font, &app->diagnostics.items[hovered_diag],
                                    outside_hover_mx, outside_hover_my, app->window_w, app->window_h);

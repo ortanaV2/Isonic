@@ -44,6 +44,8 @@ typedef struct {
     SDL_Rect close_rect;
     SDL_Rect autosave_field_rect;
     SDL_Rect corner_left_rect, corner_right_rect;
+    SDL_Rect diag_chips_on_rect, diag_chips_off_rect;
+    SDL_Rect diag_hover_on_rect, diag_hover_off_rect;
     SDL_Rect keybind_box_rects[KEYBIND_ACTION_COUNT];
     SDL_Rect save_button_rect;
     SDL_Rect reset_button_rect;

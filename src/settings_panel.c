@@ -149,7 +149,7 @@ void settings_panel_render(SDL_Renderer *renderer, TTF_Font *font, SettingsPanel
        layer_panel_render - built up from the rows actually drawn, rather
        than a hardcoded guess that could drift out of sync with the layout
        below. */
-    int content_h = HEADER_H + ROW_H * 2 + SECTION_GAP + ROW_H + ROW_H * KEYBIND_ACTION_COUNT + FOOTER_GAP + FOOTER_H + ROW_PAD_X;
+    int content_h = HEADER_H + ROW_H * 4 + SECTION_GAP + ROW_H + ROW_H * KEYBIND_ACTION_COUNT + FOOTER_GAP + FOOTER_H + ROW_PAD_X;
     int modal_w = MODAL_W;
     int modal_x = (window_w - modal_w) / 2;
     if (modal_x < 8) modal_x = 8;
@@ -227,6 +227,35 @@ void settings_panel_render(SDL_Renderer *renderer, TTF_Font *font, SettingsPanel
         sp->corner_left_rect = (SDL_Rect){ sp->corner_right_rect.x - 4 - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
         draw_button(renderer, font, &sp->corner_left_rect, "Left", sp->working.layer_panel_anchor_left, point_in(&sp->corner_left_rect, hover_x, hover_y));
         draw_button(renderer, font, &sp->corner_right_rect, "Right", !sp->working.layer_panel_anchor_left, point_in(&sp->corner_right_rect, hover_x, hover_y));
+        y += ROW_H;
+    }
+
+    /* Diagnostics chip stack (bottom-left of the canvas) */
+    {
+        SDL_Rect row = { sp->modal_rect.x, y, modal_w, ROW_H };
+        if (font != NULL) {
+            text_util_draw(renderer, font, "Error/Warning Chips", row.x + ROW_PAD_X, row.y + (ROW_H - 14) / 2, TEXT_COLOR);
+        }
+        sp->diag_chips_off_rect = (SDL_Rect){ right_x - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        sp->diag_chips_on_rect = (SDL_Rect){ sp->diag_chips_off_rect.x - 4 - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        draw_button(renderer, font, &sp->diag_chips_on_rect, "On", sp->working.diag_chips_enabled, point_in(&sp->diag_chips_on_rect, hover_x, hover_y));
+        draw_button(renderer, font, &sp->diag_chips_off_rect, "Off", !sp->working.diag_chips_enabled, point_in(&sp->diag_chips_off_rect, hover_x, hover_y));
+        y += ROW_H;
+    }
+
+    /* Hover description tooltip for a chip or a flagged wire/pin on canvas -
+       independent of the chip stack itself above, since the highlighted
+       wires/pins on canvas can still be hovered for a description even with
+       the chip stack turned off. */
+    {
+        SDL_Rect row = { sp->modal_rect.x, y, modal_w, ROW_H };
+        if (font != NULL) {
+            text_util_draw(renderer, font, "Error/Warning Hover Descriptions", row.x + ROW_PAD_X, row.y + (ROW_H - 14) / 2, TEXT_COLOR);
+        }
+        sp->diag_hover_off_rect = (SDL_Rect){ right_x - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        sp->diag_hover_on_rect = (SDL_Rect){ sp->diag_hover_off_rect.x - 4 - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        draw_button(renderer, font, &sp->diag_hover_on_rect, "On", sp->working.diag_hover_enabled, point_in(&sp->diag_hover_on_rect, hover_x, hover_y));
+        draw_button(renderer, font, &sp->diag_hover_off_rect, "Off", !sp->working.diag_hover_enabled, point_in(&sp->diag_hover_off_rect, hover_x, hover_y));
         y += ROW_H;
     }
 
@@ -318,6 +347,22 @@ SettingsPanelClickResult settings_panel_handle_click(SettingsPanel *sp, int x, i
     }
     if (point_in(&sp->corner_right_rect, x, y)) {
         sp->working.layer_panel_anchor_left = 0;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->diag_chips_on_rect, x, y)) {
+        sp->working.diag_chips_enabled = 1;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->diag_chips_off_rect, x, y)) {
+        sp->working.diag_chips_enabled = 0;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->diag_hover_on_rect, x, y)) {
+        sp->working.diag_hover_enabled = 1;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->diag_hover_off_rect, x, y)) {
+        sp->working.diag_hover_enabled = 0;
         return SETTINGS_PANEL_CLICK_CONSUMED;
     }
     for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
