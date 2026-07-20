@@ -146,10 +146,15 @@ void data_editor_render(SDL_Renderer *renderer, TTF_Font *font, DataEditor *de, 
         const char *label = "Manage Data";
         int tw = 0, th = 0;
         if (font != NULL) text_util_measure(font, label, &tw, &th);
-        const SDL_Rect *comp_btn = &tb->button_rects[TOOL_PLACE_IC];
+        /* anchored after the whole Section-Labeling/Text Label group now,
+           not directly after Components - that group sits permanently
+           between them (see taskbar.c's GROUP_GAP after TOOL_PLACE_IC), so
+           anchoring here directly off Components would have this button
+           overlap it whenever it's shown. */
+        const SDL_Rect *last_btn = &tb->button_rects[TOOL_TEXT_LABEL];
         de->button_rect = (SDL_Rect){
-            comp_btn->x + comp_btn->w + BUTTON_MARGIN, comp_btn->y,
-            BUTTON_PADDING_X + tw + BUTTON_PADDING_X, comp_btn->h,
+            last_btn->x + last_btn->w + BUTTON_MARGIN, last_btn->y,
+            BUTTON_PADDING_X + tw + BUTTON_PADDING_X, last_btn->h,
         };
 
         int btn_hovered = point_in(&de->button_rect, hover_x, hover_y);

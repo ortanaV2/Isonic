@@ -10,6 +10,8 @@ static const char *k_labels[TOOL_COUNT] = {
     "Input",
     "Output",
     "Components",
+    "Section-Labeling",
+    "Text Label",
 };
 
 static const char *k_file_menu_labels[FILE_MENU_COUNT] = {
@@ -309,8 +311,45 @@ static void draw_settings_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_
     }
 }
 
+/* Section-Labeling: a rectangle outline with a small dot at each corner,
+   hinting at the real feature's 4 draggable resize handles. */
+static void draw_section_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Color col) {
+    SDL_FPoint a = icon_pt(box, 0.15f, 0.20f);
+    SDL_FPoint b = icon_pt(box, 0.85f, 0.20f);
+    SDL_FPoint c = icon_pt(box, 0.85f, 0.80f);
+    SDL_FPoint d = icon_pt(box, 0.15f, 0.80f);
+    float thick = box->h * 0.08f;
+    icon_fill_thick_line(renderer, a.x, a.y, b.x, b.y, thick, col);
+    icon_fill_thick_line(renderer, b.x, b.y, c.x, c.y, thick, col);
+    icon_fill_thick_line(renderer, c.x, c.y, d.x, d.y, thick, col);
+    icon_fill_thick_line(renderer, d.x, d.y, a.x, a.y, thick, col);
+    float r = box->w * 0.09f;
+    icon_fill_circle(renderer, a.x, a.y, r, col);
+    icon_fill_circle(renderer, b.x, b.y, r, col);
+    icon_fill_circle(renderer, c.x, c.y, r, col);
+    icon_fill_circle(renderer, d.x, d.y, r, col);
+}
+
+/* Text Label: a plain capital "A" - the universal text-tool pictogram. Two
+   diagonal strokes from the apex to each bottom corner plus a horizontal
+   crossbar, same thick-line-plus-joint-dot technique as draw_wire_icon. */
+static void draw_text_label_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Color col) {
+    SDL_FPoint apex = icon_pt(box, 0.5f, 0.13f);
+    SDL_FPoint bottom_l = icon_pt(box, 0.14f, 0.87f);
+    SDL_FPoint bottom_r = icon_pt(box, 0.86f, 0.87f);
+    SDL_FPoint bar_l = icon_pt(box, 0.27f, 0.62f);
+    SDL_FPoint bar_r = icon_pt(box, 0.73f, 0.62f);
+    float thick = box->h * 0.14f;
+    icon_fill_thick_line(renderer, apex.x, apex.y, bottom_l.x, bottom_l.y, thick, col);
+    icon_fill_thick_line(renderer, apex.x, apex.y, bottom_r.x, bottom_r.y, thick, col);
+    icon_fill_thick_line(renderer, bar_l.x, bar_l.y, bar_r.x, bar_r.y, thick * 0.85f, col);
+    icon_fill_circle(renderer, apex.x, apex.y, thick * 0.5f, col);
+    icon_fill_circle(renderer, bottom_l.x, bottom_l.y, thick * 0.5f, col);
+    icon_fill_circle(renderer, bottom_r.x, bottom_r.y, thick * 0.5f, col);
+}
+
 /* TOOL_PLACE_IC (Components) has no icon - dispatched separately in
-   taskbar_render, which only calls this for the four basic tools. */
+   taskbar_render, which only calls this for icon-only tools. */
 static void draw_tool_icon(SDL_Renderer *renderer, Tool tool, const SDL_Rect *box, SDL_Color col) {
     switch (tool) {
         case TOOL_SELECT: draw_select_icon(renderer, box, col); break;
@@ -318,6 +357,8 @@ static void draw_tool_icon(SDL_Renderer *renderer, Tool tool, const SDL_Rect *bo
         case TOOL_VIA:    draw_via_icon(renderer, box, col); break;
         case TOOL_INPUT:  draw_input_icon(renderer, box, col); break;
         case TOOL_OUTPUT: draw_output_icon(renderer, box, col); break;
+        case TOOL_SECTION:    draw_section_icon(renderer, box, col); break;
+        case TOOL_TEXT_LABEL: draw_text_label_icon(renderer, box, col); break;
         default: break;
     }
 }
@@ -481,7 +522,12 @@ void taskbar_layout(Taskbar *tb, int window_w) {
         tb->button_rects[i].y = BUTTON_MARGIN;
         tb->button_rects[i].w = w;
         tb->button_rects[i].h = btn_h;
-        x += w + BUTTON_MARGIN;
+        /* the annotation-tool group (Section-Labeling/Text Label) starts
+           right after Components, separated by the same GROUP_GAP the File/
+           Settings group uses on the left, instead of just BUTTON_MARGIN -
+           see taskbar_render's own divider line drawn through the middle of
+           this gap. */
+        x += w + (i == TOOL_PLACE_IC ? GROUP_GAP : BUTTON_MARGIN);
     }
 }
 
@@ -557,6 +603,14 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
     int divider_x = (tb->settings_button_rect.x + tb->settings_button_rect.w + tb->button_rects[TOOL_SELECT].x) / 2;
     SDL_SetRenderDrawColor(renderer, 60, 60, 66, 255);
     SDL_RenderDrawLine(renderer, divider_x, BUTTON_MARGIN + 3, divider_x, TASKBAR_HEIGHT - BUTTON_MARGIN - 3);
+
+    /* same divider, marking off the Section-Labeling/Text Label annotation
+       group from the main tool group - see taskbar_layout's matching
+       GROUP_GAP after TOOL_PLACE_IC. */
+    int divider_x2 = (tb->button_rects[TOOL_PLACE_IC].x + tb->button_rects[TOOL_PLACE_IC].w +
+                       tb->button_rects[TOOL_SECTION].x) / 2;
+    SDL_SetRenderDrawColor(renderer, 60, 60, 66, 255);
+    SDL_RenderDrawLine(renderer, divider_x2, BUTTON_MARGIN + 3, divider_x2, TASKBAR_HEIGHT - BUTTON_MARGIN - 3);
 
     /* -1 = no icon tool is hovered; used below to draw that button's label
        as a floating tooltip once every button/icon has already been drawn,

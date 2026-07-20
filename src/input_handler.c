@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <string.h>
 #include "app.h"
 #include "render.h"
 #include "undo.h"
@@ -14,8 +16,9 @@ static void push_undo(App *app) {
 
 /* Clears every .selected flag in the circuit, not just the tracked single
    ids - a marquee selection (see finish_marquee_select) can mark several
-   components/wires at once without ever touching selected_component_id/
-   selected_wire_id, so those alone aren't enough to undo it. */
+   components/wires/sections/text labels at once without ever touching
+   selected_component_id/selected_wire_id/selected_section_id/
+   selected_text_label_id, so those alone aren't enough to undo it. */
 static void clear_selection(App *app) {
     for (int i = 0; i < app->circuit.component_high_water; i++) {
         app->circuit.components[i].selected = 0;
@@ -23,8 +26,16 @@ static void clear_selection(App *app) {
     for (int i = 0; i < app->circuit.wire_high_water; i++) {
         app->circuit.wires[i].selected = 0;
     }
+    for (int i = 0; i < app->circuit.section_high_water; i++) {
+        app->circuit.sections[i].selected = 0;
+    }
+    for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+        app->circuit.text_labels[i].selected = 0;
+    }
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
+    app->selected_section_id = -1;
+    app->selected_text_label_id = -1;
 }
 
 static void select_component(App *app, int id) {
@@ -39,8 +50,25 @@ static void select_wire(App *app, int id) {
     app->circuit.wires[id].selected = 1;
 }
 
-/* Removes every selected component/wire, not just the single tracked ids -
-   a marquee selection can mark several at once (see clear_selection above). */
+static void select_section(App *app, int id) {
+    clear_selection(app);
+    app->selected_section_id = id;
+    app->circuit.sections[id].selected = 1;
+}
+
+static void select_text_label(App *app, int id) {
+    clear_selection(app);
+    app->selected_text_label_id = id;
+    app->circuit.text_labels[id].selected = 1;
+}
+
+/* Removes every selected component/wire/section/text label, not just the
+   single tracked ids - a marquee selection can mark several at once (see
+   clear_selection above). A LOCKED section is skipped entirely - lock means
+   "leave this alone", and Delete while multi-selecting nearby components is
+   exactly the kind of accident that's meant to prevent (see circuit.h's
+   Section comment) - it stays selected afterward rather than silently
+   vanishing from the selection too. */
 static void delete_selection(App *app) {
     int removed = 0;
     for (int i = 0; i < app->circuit.component_high_water; i++) {
@@ -55,8 +83,23 @@ static void delete_selection(App *app) {
             removed = 1;
         }
     }
+    for (int i = 0; i < app->circuit.section_high_water; i++) {
+        Section *s = &app->circuit.sections[i];
+        if (s->in_use && s->selected && !s->locked) {
+            circuit_remove_section(&app->circuit, i);
+            removed = 1;
+        }
+    }
+    for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+        if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) {
+            circuit_remove_text_label(&app->circuit, i);
+            removed = 1;
+        }
+    }
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
+    app->selected_section_id = -1;
+    app->selected_text_label_id = -1;
     if (removed) push_undo(app);
 }
 
@@ -71,6 +114,77 @@ static void clear_wire_node_marks(App *app) {
     app->drag_node_via_count = 0;
 }
 
+/* Section labels and Text Labels have different max lengths (see circuit.h)
+   even though they share one edit buffer - this is the cap SDL_TEXTINPUT
+   routing enforces while typing, so it can never even momentarily hold more
+   than whichever kind is actually being edited will keep at commit time. */
+static int canvas_edit_max_len(CanvasEditKind kind) {
+    if (kind == CANVAS_EDIT_NEW_SECTION || kind == CANVAS_EDIT_SECTION_LABEL) return SECTION_LABEL_MAX_LEN;
+    return TEXT_LABEL_MAX_LEN;
+}
+
+/* Discards (never commits) any canvas text edit in progress - used both by
+   Escape and by cancel_transient_actions below, which must never leave a
+   stale SDL_StartTextInput() active behind a tool switch. */
+static void cancel_canvas_edit(App *app) {
+    if (app->canvas_edit_kind == CANVAS_EDIT_NONE) return;
+    app->canvas_edit_kind = CANVAS_EDIT_NONE;
+    app->canvas_edit_id = -1;
+    SDL_StopTextInput();
+}
+
+/* Enter, or a click away from the field being typed - commits a non-empty
+   buffer (adding the pending Section/Text Label to the circuit for the
+   first time, or overwriting an existing one's label/text), same as
+   layer_panel.c's own rename field. An EMPTY commit on an EXISTING
+   section/label leaves it unchanged rather than blanking it (same as
+   layer_panel.c); an empty commit on a brand new one just discards the
+   pending geometry - nothing is ever added with blank text. */
+static void commit_canvas_edit(App *app) {
+    if (app->canvas_edit_kind == CANVAS_EDIT_NONE) return;
+    if (app->canvas_edit_len > 0) {
+        switch (app->canvas_edit_kind) {
+            case CANVAS_EDIT_NEW_SECTION: {
+                int id = circuit_add_section(&app->circuit, app->pending_section_x0, app->pending_section_y0,
+                                              app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf);
+                if (id >= 0) push_undo(app);
+                break;
+            }
+            case CANVAS_EDIT_SECTION_LABEL: {
+                /* canvas_edit_buf is sized for the larger of the two kinds
+                   (CANVAS_EDIT_BUF_LEN, see app.h) - typing itself already
+                   caps a Section label at SECTION_LABEL_MAX_LEN
+                   (canvas_edit_max_len), so this can never actually
+                   truncate, but gcc can't see that across the two
+                   functions and flags it as -Wformat-truncation regardless.
+                   An explicit precision matching the destination makes the
+                   bound visible to the compiler instead of just relying on
+                   snprintf's own (already-safe) runtime truncation. */
+                Section *s = &app->circuit.sections[app->canvas_edit_id];
+                snprintf(s->label, sizeof(s->label), "%.*s", (int)sizeof(s->label) - 1, app->canvas_edit_buf);
+                push_undo(app);
+                break;
+            }
+            case CANVAS_EDIT_NEW_TEXT_LABEL: {
+                int id = circuit_add_text_label(&app->circuit, app->pending_text_label_x, app->pending_text_label_y,
+                                                 app->canvas_edit_buf);
+                if (id >= 0) push_undo(app);
+                break;
+            }
+            case CANVAS_EDIT_TEXT_LABEL: {
+                TextLabel *t = &app->circuit.text_labels[app->canvas_edit_id];
+                snprintf(t->text, sizeof(t->text), "%s", app->canvas_edit_buf);
+                push_undo(app);
+                break;
+            }
+            default: break;
+        }
+    }
+    app->canvas_edit_kind = CANVAS_EDIT_NONE;
+    app->canvas_edit_id = -1;
+    SDL_StopTextInput();
+}
+
 static void cancel_transient_actions(App *app) {
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
@@ -79,6 +193,8 @@ static void cancel_transient_actions(App *app) {
     app->drag_attach_count = 0;
     app->panning = 0;
     app->marquee_active = 0;
+    app->section_dragging = 0;
+    cancel_canvas_edit(app);
     app->pasting = 0;
     app->taskbar.menu_open = 0;
     app->active_tool = TOOL_SELECT;
@@ -119,6 +235,10 @@ static void handle_escape(App *app) {
         app->marquee_active = 0;
         return;
     }
+    if (app->section_dragging) {
+        app->section_dragging = 0;
+        return;
+    }
     if (app->taskbar.menu_open) {
         app->taskbar.menu_open = 0;
         return;
@@ -134,45 +254,6 @@ static void handle_escape(App *app) {
        neither is an "in-progress action" worth a separate Escape of its own. */
     app->active_tool = TOOL_SELECT;
     clear_selection(app);
-}
-
-/* Ctrl+C - copies a component and immediately starts a placement-at-cursor
-   preview for it, same click-to-place interaction as the taskbar's Place
-   tools but without a taskbar slot. Which component: whatever is directly
-   under the cursor right now, even if nothing is selected - hovering alone
-   is enough. Only if the cursor isn't over anything does it fall back to the
-   current selection, and only if that selection is exactly one component -
-   "eine markierte Komponente" is singular for a reason: which one would
-   ambiguous multi-selection copy? Wires aren't copyable this way. */
-static void copy_selected_component(App *app) {
-    const Component *found = NULL;
-
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
-    if (my >= TASKBAR_HEIGHT) {
-        int box_gx, box_gy;
-        camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
-        int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
-        if (comp_id >= 0) found = &app->circuit.components[comp_id];
-    }
-
-    if (found == NULL) {
-        int ambiguous = 0;
-        for (int i = 0; i < app->circuit.component_high_water; i++) {
-            Component *c = &app->circuit.components[i];
-            if (c->in_use && c->selected) {
-                if (found != NULL) { ambiguous = 1; break; }
-                found = c;
-            }
-        }
-        if (ambiguous) found = NULL;
-    }
-    if (found == NULL) return;
-
-    cancel_transient_actions(app); /* clean slate - drop any wiring/drag/marquee in progress first */
-    app->clipboard_ic_def = found->ic_def;
-    app->pasting = 1;
-    app->place_rotation = 0;
 }
 
 static void set_active_tool(App *app, Tool tool) {
@@ -413,6 +494,34 @@ static void begin_wire_body_drag(App *app, int wire_id, int gx, int gy) {
     snapshot_drag_attachments(app, anchors, 2, wire_id);
 }
 
+/* Sections/Text Labels have no pins or endpoints anything else could be
+   "attached" to, so unlike begin_component_drag/begin_wire_body_drag these
+   never need snapshot_drag_attachments - moving one only ever moves itself. */
+static void begin_section_body_drag(App *app, int section_id, int gx, int gy) {
+    select_section(app, section_id);
+    app->drag_kind = DRAG_SECTION_BODY;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+    app->drag_moved = 0;
+}
+
+static void begin_section_handle_drag(App *app, int section_id, int corner, int gx, int gy) {
+    select_section(app, section_id);
+    app->drag_kind = DRAG_SECTION_HANDLE;
+    app->drag_section_corner = corner;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+    app->drag_moved = 0;
+}
+
+static void begin_text_label_drag(App *app, int text_label_id, int gx, int gy) {
+    select_text_label(app, text_label_id);
+    app->drag_kind = DRAG_TEXT_LABEL;
+    app->drag_last_gx = gx;
+    app->drag_last_gy = gy;
+    app->drag_moved = 0;
+}
+
 static int selection_count(const App *app) {
     int n = 0;
     for (int i = 0; i < app->circuit.component_high_water; i++) {
@@ -420,6 +529,12 @@ static int selection_count(const App *app) {
     }
     for (int i = 0; i < app->circuit.wire_high_water; i++) {
         if (app->circuit.wires[i].in_use && app->circuit.wires[i].selected) n++;
+    }
+    for (int i = 0; i < app->circuit.section_high_water; i++) {
+        if (app->circuit.sections[i].in_use && app->circuit.sections[i].selected) n++;
+    }
+    for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+        if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) n++;
     }
     return n;
 }
@@ -432,16 +547,22 @@ static int selection_count(const App *app) {
    attached to one of the selection's own anchor points (component pins, or
    a selected wire's own endpoints) is dragged along too, same as a single-
    item drag - see snapshot_drag_attachments. click_component_id/
-   click_wire_id (one of them -1) is whichever single item was actually
-   clicked to start this drag - see the drag_click_ and drag_moved fields'
-   comment in app.h and finish_drag: a plain click with no movement still
-   collapses down to just that one item. */
-static void begin_selection_drag(App *app, int gx, int gy, int click_component_id, int click_wire_id) {
+   click_wire_id/click_section_id/click_text_label_id (all but one -1) is
+   whichever single item was actually clicked to start this drag - see the
+   drag_click_ and drag_moved fields' comment in app.h and finish_drag: a
+   plain click with no movement still collapses down to just that one item.
+   Sections/Text Labels contribute no anchors of their own below (see
+   begin_section_body_drag's comment) - only components/wires can have
+   anything else attached to them. */
+static void begin_selection_drag(App *app, int gx, int gy, int click_component_id, int click_wire_id,
+                                  int click_section_id, int click_text_label_id) {
     app->drag_kind = DRAG_SELECTION;
     app->drag_last_gx = gx;
     app->drag_last_gy = gy;
     app->drag_click_component_id = click_component_id;
     app->drag_click_wire_id = click_wire_id;
+    app->drag_click_section_id = click_section_id;
+    app->drag_click_text_label_id = click_text_label_id;
     app->drag_moved = 0;
 
     Circuit *circuit = &app->circuit;
@@ -516,20 +637,26 @@ static void begin_marquee_select(App *app, int mx, int my) {
     app->marquee_start_my = app->marquee_cur_my = my;
 }
 
-/* Recomputes which components/wires are enclosed by the current marquee box
-   and marks them .selected - called on every mouse-move during a marquee
-   drag (see app_handle_event) so the selection previews live as the box
-   grows/shrinks, instead of only appearing once the button is released.
-   Fully enclosed only ("erst markiert, wenn vollständig markiert"), not
-   merely touched - a box that only grazes a component's edge doesn't grab
-   it. A wire counts as enclosed when both its endpoints are inside the box
-   (it has no interior area of its own to test). Recomputed from scratch
-   every call (clearing first) rather than incrementally, so shrinking the
-   box correctly drops things it no longer covers. */
+/* Recomputes which components/wires/sections/text labels are enclosed by
+   the current marquee box and marks them .selected - called on every
+   mouse-move during a marquee drag (see app_handle_event) so the selection
+   previews live as the box grows/shrinks, instead of only appearing once
+   the button is released. Fully enclosed only ("erst markiert, wenn
+   vollständig markiert"), not merely touched - a box that only grazes a
+   component's edge doesn't grab it. A wire counts as enclosed when both its
+   endpoints are inside the box (it has no interior area of its own to
+   test); a Text Label the same way its single anchor point does. A LOCKED
+   section still gets marquee-selected like anything else (lock only
+   protects against move/resize/rename/delete, not selection - see
+   circuit.h). Recomputed from scratch every call (clearing first) rather
+   than incrementally, so shrinking the box correctly drops things it no
+   longer covers. */
 static void update_marquee_selection(App *app) {
     Circuit *circuit = &app->circuit;
     for (int i = 0; i < circuit->component_high_water; i++) circuit->components[i].selected = 0;
     for (int i = 0; i < circuit->wire_high_water; i++) circuit->wires[i].selected = 0;
+    for (int i = 0; i < circuit->section_high_water; i++) circuit->sections[i].selected = 0;
+    for (int i = 0; i < circuit->text_label_high_water; i++) circuit->text_labels[i].selected = 0;
 
     if (app->marquee_start_mx == app->marquee_cur_mx && app->marquee_start_my == app->marquee_cur_my) return;
 
@@ -556,6 +683,23 @@ static void update_marquee_selection(App *app) {
             w->selected = 1;
         }
     }
+    for (int i = 0; i < circuit->section_high_water; i++) {
+        Section *s = &circuit->sections[i];
+        /* a LOCKED section can't be highlighted/selected at all, not even
+           by marquee - see circuit.h's Section comment and the matching
+           exclusion in handle_left_click's own section-label/body checks. */
+        if (!s->in_use || s->locked) continue;
+        if (s->x0 >= min_x && s->x1 <= max_x && s->y0 >= min_y && s->y1 <= max_y) {
+            s->selected = 1;
+        }
+    }
+    for (int i = 0; i < circuit->text_label_high_water; i++) {
+        TextLabel *t = &circuit->text_labels[i];
+        if (!t->in_use) continue;
+        if (t->x >= min_x && t->x <= max_x && t->y >= min_y && t->y <= max_y) {
+            t->selected = 1;
+        }
+    }
 }
 
 /* Button-up just ends the drag - the selection itself has already been kept
@@ -565,6 +709,33 @@ static void update_marquee_selection(App *app) {
 static void finish_marquee_select(App *app) {
     app->marquee_active = 0;
     update_marquee_selection(app);
+}
+
+/* TOOL_SECTION mouse-up: converts the just-dragged screen-space box (see
+   app.h's section_dragging) into a grid rect and hands it to
+   canvas_edit_kind for its first-time label entry, rather than adding it to
+   the circuit directly - see CANVAS_EDIT_NEW_SECTION and commit_canvas_edit.
+   Too small a drag (below SECTION_MIN_SIZE either axis - including a plain
+   click with no real drag at all) discards it instead of creating a
+   degenerate sliver nobody could see or select afterward. */
+static void finish_section_draw(App *app, int mx, int my) {
+    app->section_dragging = 0;
+    int gx0, gy0, gx1, gy1;
+    camera_screen_to_grid(&app->camera, app->section_drag_start_mx, app->section_drag_start_my, &gx0, &gy0);
+    camera_screen_to_grid(&app->camera, mx, my, &gx1, &gy1);
+    int lo_x = gx0 < gx1 ? gx0 : gx1, hi_x = gx0 > gx1 ? gx0 : gx1;
+    int lo_y = gy0 < gy1 ? gy0 : gy1, hi_y = gy0 > gy1 ? gy0 : gy1;
+    if (hi_x - lo_x < SECTION_MIN_SIZE || hi_y - lo_y < SECTION_MIN_SIZE) return;
+
+    app->canvas_edit_kind = CANVAS_EDIT_NEW_SECTION;
+    app->canvas_edit_id = -1;
+    app->pending_section_x0 = lo_x;
+    app->pending_section_y0 = lo_y;
+    app->pending_section_x1 = hi_x;
+    app->pending_section_y1 = hi_y;
+    app->canvas_edit_buf[0] = '\0';
+    app->canvas_edit_len = 0;
+    SDL_StartTextInput();
 }
 
 static WireKind tool_to_wire_kind(Tool tool) {
@@ -607,7 +778,210 @@ static int find_input_terminal_at(App *app, int mx, int my) {
     return -1;
 }
 
-static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx, float fy) {
+/* Section corner-resize handles: a small fixed screen-pixel radius around
+   each handle's exact position (section_corner_screen_pos), same idea as
+   TERMINAL_HIT_PADDING_PX above but generous enough for a genuinely tiny
+   target. Only a currently-.selected, unlocked section's handles are
+   offered at all - render_sections only draws them under that same
+   condition (locked ones can't be resized; an unselected one hasn't had
+   its handles revealed yet), so this stays consistent with what's actually
+   on screen. */
+#define SECTION_HANDLE_HIT_PX 8
+
+static int find_section_handle_at(App *app, int mx, int my, int *out_section_id, int *out_corner) {
+    Circuit *circuit = &app->circuit;
+    for (int i = circuit->section_high_water - 1; i >= 0; i--) {
+        Section *s = &circuit->sections[i];
+        if (!s->in_use || !s->selected || s->locked) continue;
+        for (int corner = 0; corner < 4; corner++) {
+            int hx, hy;
+            section_corner_screen_pos(&app->camera, s, corner, &hx, &hy);
+            if (mx >= hx - SECTION_HANDLE_HIT_PX && mx <= hx + SECTION_HANDLE_HIT_PX &&
+                my >= hy - SECTION_HANDLE_HIT_PX && my <= hy + SECTION_HANDLE_HIT_PX) {
+                *out_section_id = i;
+                *out_corner = corner;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* A section's label text and lock icon - screen-space widgets computed the
+   same way render_sections itself draws them (section_label_bounds), so a
+   click always lands exactly where it visually looks like it should. Any
+   section offers these, not just a selected one - unlike the resize
+   handles, selecting/locking/renaming doesn't require having selected it
+   first. */
+static int find_section_label_or_lock_at(App *app, int mx, int my, int *out_section_id, int *out_is_lock) {
+    Circuit *circuit = &app->circuit;
+    for (int i = circuit->section_high_water - 1; i >= 0; i--) {
+        Section *s = &circuit->sections[i];
+        if (!s->in_use) continue;
+        SDL_Rect label_rect, lock_rect;
+        if (!section_label_bounds(app->font_large, &app->camera, s, &label_rect, &lock_rect)) continue;
+        /* the lock icon is only a valid click target while it's actually
+           being drawn (see render_sections/section_lock_icon_visible) - mx,my
+           doubles as "the cursor's current hover position" here, exactly
+           matching what this same frame rendered it with. */
+        if (section_lock_icon_visible(app->font_large, &app->camera, s, mx, my) &&
+            mx >= lock_rect.x && mx < lock_rect.x + lock_rect.w && my >= lock_rect.y && my < lock_rect.y + lock_rect.h) {
+            *out_section_id = i;
+            *out_is_lock = 1;
+            return 1;
+        }
+        if (mx >= label_rect.x && mx < label_rect.x + label_rect.w && my >= label_rect.y && my < label_rect.y + label_rect.h) {
+            *out_section_id = i;
+            *out_is_lock = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int find_text_label_at(App *app, int mx, int my) {
+    Circuit *circuit = &app->circuit;
+    for (int i = circuit->text_label_high_water - 1; i >= 0; i--) {
+        TextLabel *t = &circuit->text_labels[i];
+        if (!t->in_use) continue;
+        SDL_Rect bounds;
+        if (!text_label_bounds(app->font_large, &app->camera, t, &bounds)) continue;
+        if (mx >= bounds.x && mx < bounds.x + bounds.w && my >= bounds.y && my < bounds.y + bounds.h) return i;
+    }
+    return -1;
+}
+
+/* Ctrl+C - copies whatever's directly under the cursor right now, even if
+   nothing is selected (hovering alone is enough): a Component, a Section
+   (its outline/corners, same border-only hit-test click uses - see
+   circuit_find_section_at), or a Text Label, checked in that priority
+   order. Only if the cursor isn't over any of the three does it fall back
+   to the current selection, and only if that selection is exactly one item
+   total across all three kinds - "eine markierte Komponente" is singular
+   for a reason: which one would an ambiguous multi-selection copy? Wires
+   aren't copyable this way. */
+static void copy_selection(App *app) {
+    const Component *found_component = NULL;
+    int found_section_id = -1;
+    int found_text_label_id = -1;
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    if (my >= TASKBAR_HEIGHT) {
+        int box_gx, box_gy;
+        camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+        int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
+        if (comp_id >= 0) found_component = &app->circuit.components[comp_id];
+
+        if (found_component == NULL) {
+            float fx, fy;
+            camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
+            int sec_id = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+            if (sec_id >= 0) found_section_id = sec_id;
+        }
+        if (found_component == NULL && found_section_id < 0) {
+            found_text_label_id = find_text_label_at(app, mx, my);
+        }
+    }
+
+    if (found_component == NULL && found_section_id < 0 && found_text_label_id < 0) {
+        int comp_count = 0, sec_count = 0, text_count = 0;
+        int comp_candidate = -1, sec_candidate = -1, text_candidate = -1;
+        for (int i = 0; i < app->circuit.component_high_water; i++) {
+            if (app->circuit.components[i].in_use && app->circuit.components[i].selected) {
+                comp_count++;
+                comp_candidate = i;
+            }
+        }
+        for (int i = 0; i < app->circuit.section_high_water; i++) {
+            if (app->circuit.sections[i].in_use && app->circuit.sections[i].selected) {
+                sec_count++;
+                sec_candidate = i;
+            }
+        }
+        for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+            if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) {
+                text_count++;
+                text_candidate = i;
+            }
+        }
+        if (comp_count + sec_count + text_count == 1) {
+            if (comp_count == 1) found_component = &app->circuit.components[comp_candidate];
+            else if (sec_count == 1) found_section_id = sec_candidate;
+            else found_text_label_id = text_candidate;
+        }
+    }
+
+    if (found_component != NULL) {
+        /* a Component still immediately starts its existing click-to-place
+           preview - the only one of the three with such a ghost, see
+           app_pending_place_ic. */
+        cancel_transient_actions(app);
+        app->clipboard_kind = CLIPBOARD_IC;
+        app->clipboard_ic_def = found_component->ic_def;
+        app->pasting = 1;
+        app->place_rotation = 0;
+    } else if (found_section_id >= 0) {
+        const Section *s = &app->circuit.sections[found_section_id];
+        cancel_transient_actions(app);
+        app->clipboard_kind = CLIPBOARD_SECTION;
+        app->clipboard_section_w = s->x1 - s->x0;
+        app->clipboard_section_h = s->y1 - s->y0;
+        snprintf(app->clipboard_section_label, sizeof(app->clipboard_section_label), "%s", s->label);
+    } else if (found_text_label_id >= 0) {
+        const TextLabel *t = &app->circuit.text_labels[found_text_label_id];
+        cancel_transient_actions(app);
+        app->clipboard_kind = CLIPBOARD_TEXT_LABEL;
+        snprintf(app->clipboard_text_label_text, sizeof(app->clipboard_text_label_text), "%s", t->text);
+    }
+}
+
+/* Ctrl+V. A copied Component re-arms the same click-to-place preview
+   copy_selection already started (a no-op if nothing's been copied this
+   session, or the placement's tool got switched away from) - lets you place
+   another one after the first's already been dropped, without re-copying.
+   A copied Section/Text Label has no such ghost to re-arm - there's nothing
+   else Ctrl+V could sensibly do for those except drop a fresh copy right
+   where the cursor is AT THIS MOMENT, so that's what it does, immediately,
+   no click required (a locked source Section's lock state is deliberately
+   NOT copied - a pasted copy always starts unlocked, since locking is a
+   deliberate protective action the user can reapply if they want it again). */
+static void paste_clipboard(App *app) {
+    if (app->clipboard_kind == CLIPBOARD_IC) {
+        if (app->clipboard_ic_def == NULL) return;
+        cancel_transient_actions(app);
+        app->pasting = 1;
+        app->place_rotation = 0;
+        return;
+    }
+    if (app->clipboard_kind == CLIPBOARD_NONE) return;
+
+    int mx, my;
+    SDL_GetMouseState(&mx, &my);
+    if (my < TASKBAR_HEIGHT) return; /* nowhere sensible to drop it under the taskbar strip */
+    int gx, gy;
+    camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
+
+    if (app->clipboard_kind == CLIPBOARD_SECTION) {
+        int id = circuit_add_section(&app->circuit, gx, gy, gx + app->clipboard_section_w, gy + app->clipboard_section_h,
+                                      app->clipboard_section_label);
+        if (id >= 0) {
+            select_section(app, id);
+            push_undo(app);
+        }
+    } else if (app->clipboard_kind == CLIPBOARD_TEXT_LABEL) {
+        int id = circuit_add_text_label(&app->circuit, gx, gy, app->clipboard_text_label_text);
+        if (id >= 0) {
+            select_text_label(app, id);
+            push_undo(app);
+        }
+    }
+}
+
+/* double_click gates starting a Section-label/Text-Label rename - a plain
+   click just selects, same "single click selects, double click renames"
+   split layer_panel.c's own name field uses. */
+static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx, float fy, int double_click) {
     /* clicking an Input's H/L label always toggles it, no matter what tool is
        active or what else that click would otherwise do */
     int input_wire_id = find_input_terminal_at(app, mx, my);
@@ -642,13 +1016,107 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return;
     }
 
+    /* Section-Labeling: drag out a rectangle, same screen-space-until-
+       release tracking the marquee box uses - see finish_section_draw. No
+       hit-test to fall through first, unlike TOOL_SELECT below - this tool
+       only ever means "start drawing a new section", nothing else. */
+    if (app->active_tool == TOOL_SECTION) {
+        clear_selection(app);
+        app->section_dragging = 1;
+        app->section_drag_start_mx = app->section_drag_cur_mx = mx;
+        app->section_drag_start_my = app->section_drag_cur_my = my;
+        return;
+    }
+
+    /* Text Label: a single click places one and immediately starts typing
+       it - see CANVAS_EDIT_NEW_TEXT_LABEL/commit_canvas_edit. */
+    if (app->active_tool == TOOL_TEXT_LABEL) {
+        clear_selection(app);
+        app->canvas_edit_kind = CANVAS_EDIT_NEW_TEXT_LABEL;
+        app->canvas_edit_id = -1;
+        app->pending_text_label_x = gx;
+        app->pending_text_label_y = gy;
+        app->canvas_edit_buf[0] = '\0';
+        app->canvas_edit_len = 0;
+        SDL_StartTextInput();
+        return;
+    }
+
     /* TOOL_SELECT - wires are only ever started from the Wire/Input/Output tool
        now; Select mode does not let you drag a new wire off a pin, even by
        clicking one. It does let you drag a wire's node (every endpoint
        coincident at that point moves together), or the body of a wire/IC
        (moving it as a whole, dragging along anything attached at its
-       endpoints/pins). Node-picking goes first since it's the most precise
-       target and must win over a component/wire body sitting under it. */
+       endpoints/pins).
+
+       A section's corner handles and its label/lock icon are checked first,
+       above even node-picking - small, precise, deliberately-placed targets
+       that should always win over whatever circuit content happens to sit
+       under/behind them (a section itself deliberately renders as a
+       background layer, see render_sections). Its plain rectangle BODY, by
+       contrast, is checked LAST, after every other kind of hit-test below -
+       it's a big diffuse area that should always lose to anything more
+       specific drawn on top of it. */
+    int handle_section_id, handle_corner;
+    if (find_section_handle_at(app, mx, my, &handle_section_id, &handle_corner)) {
+        begin_section_handle_drag(app, handle_section_id, handle_corner, gx, gy);
+        return;
+    }
+
+    int label_section_id, label_is_lock;
+    if (find_section_label_or_lock_at(app, mx, my, &label_section_id, &label_is_lock)) {
+        Section *s = &app->circuit.sections[label_section_id];
+        if (label_is_lock) {
+            /* the lock icon itself always stays clickable regardless of
+               current state - otherwise a locked section could never be
+               unlocked again. Locking one that was selected also drops the
+               selection - it can't be highlighted while locked (see below),
+               so it shouldn't stay looking selected either. */
+            s->locked = !s->locked;
+            if (s->locked && s->selected) {
+                s->selected = 0;
+                if (app->selected_section_id == label_section_id) app->selected_section_id = -1;
+            }
+            push_undo(app);
+        } else if (!s->locked) {
+            /* a LOCKED section's label deliberately does nothing here - not
+               selectable, not renameable, see circuit.h's Section comment
+               and update_marquee_selection's identical exclusion. */
+            if (double_click) {
+                select_section(app, label_section_id);
+                app->canvas_edit_kind = CANVAS_EDIT_SECTION_LABEL;
+                app->canvas_edit_id = label_section_id;
+                snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", s->label);
+                app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
+                SDL_StartTextInput();
+            } else {
+                select_section(app, label_section_id);
+            }
+        }
+        return;
+    }
+
+    int text_label_id = find_text_label_at(app, mx, my);
+    if (text_label_id >= 0) {
+        TextLabel *t = &app->circuit.text_labels[text_label_id];
+        if (double_click) {
+            select_text_label(app, text_label_id);
+            app->canvas_edit_kind = CANVAS_EDIT_TEXT_LABEL;
+            app->canvas_edit_id = text_label_id;
+            snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", t->text);
+            app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
+            SDL_StartTextInput();
+        } else if (t->selected && selection_count(app) > 1) {
+            begin_selection_drag(app, gx, gy, -1, -1, -1, text_label_id);
+        } else {
+            begin_text_label_drag(app, text_label_id, gx, gy);
+        }
+        return;
+    }
+
+    /* Node-picking goes first among the "ordinary circuit content" checks
+       since it's the most precise target and must win over a component/wire
+       body sitting under it. */
     int node_x, node_y;
     if (find_wire_node_at(app, fx, fy, &node_x, &node_y)) {
         begin_wire_node_drag(app, node_x, node_y, gx, gy);
@@ -665,7 +1133,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
            drags the whole selection, instead of collapsing it down to just
            this one component (see begin_selection_drag) */
         if (app->circuit.components[comp_id].selected && selection_count(app) > 1) {
-            begin_selection_drag(app, gx, gy, comp_id, -1);
+            begin_selection_drag(app, gx, gy, comp_id, -1, -1, -1);
         } else {
             begin_component_drag(app, comp_id, gx, gy);
         }
@@ -675,12 +1143,31 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         if (app->circuit.wires[wire_id].selected && selection_count(app) > 1) {
-            begin_selection_drag(app, gx, gy, -1, wire_id);
+            begin_selection_drag(app, gx, gy, -1, wire_id, -1, -1);
         } else {
             begin_wire_body_drag(app, wire_id, gx, gy);
         }
         return;
     }
+
+    /* on the section's own OUTLINE (or a corner) only - box_gx/box_gy would
+       hit-test its filled interior instead, which is deliberately NOT a
+       click target (see circuit_find_section_at) so components/wires drawn
+       inside a section, and empty space around them, both stay fully
+       click-through. */
+    int box_section_id = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+    if (box_section_id >= 0 && !app->circuit.sections[box_section_id].locked) {
+        Section *s = &app->circuit.sections[box_section_id];
+        if (s->selected && selection_count(app) > 1) {
+            begin_selection_drag(app, gx, gy, -1, -1, box_section_id, -1);
+        } else {
+            begin_section_body_drag(app, box_section_id, gx, gy);
+        }
+        return;
+    }
+    /* a LOCKED section is fully non-interactive here (not even selectable -
+       see circuit.h's Section comment) - falls through to whatever's below
+       instead of returning, same as if nothing were hit at all. */
 
     /* nothing under the cursor - start a rubber-band selection box instead of
        just clearing the selection outright (a plain click with no drag still
@@ -713,6 +1200,8 @@ static void finish_drag(App *app) {
     if (app->drag_kind == DRAG_SELECTION && !app->drag_moved) {
         if (app->drag_click_component_id >= 0) select_component(app, app->drag_click_component_id);
         else if (app->drag_click_wire_id >= 0) select_wire(app, app->drag_click_wire_id);
+        else if (app->drag_click_section_id >= 0) select_section(app, app->drag_click_section_id);
+        else if (app->drag_click_text_label_id >= 0) select_text_label(app, app->drag_click_text_label_id);
     }
     if (app->drag_moved) push_undo(app);
     clear_wire_node_marks(app);
@@ -801,6 +1290,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                taskbar chrome, same as before. Manage Data's button/panel get
                the same treatment right after, for the same reason. */
             if (event->button.button == SDL_BUTTON_LEFT) {
+                /* A Section/Text-Label edit in progress owns the keyboard
+                   entirely (see the SDL_KEYDOWN case) but has no bounded
+                   "field rect" of its own the way layer_panel.c's rename
+                   field does - any left click anywhere else in the app
+                   (including one that's about to open Settings, or start an
+                   entirely different action) commits it first (or silently
+                   discards it if nothing was typed), same "click away
+                   confirms" rule, just app-wide instead of panel-local. */
+                commit_canvas_edit(app);
+
                 /* Settings is a true modal - while open it must intercept
                    every click before anything else gets a chance, including
                    clicks on the File/Settings buttons themselves (clicking
@@ -823,7 +1322,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
             camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
             if (event->button.button == SDL_BUTTON_LEFT) {
                 if (app->active_tool == TOOL_VIA) handle_via_tool_click(app, fx, fy);
-                else handle_left_click(app, mx, my, gx, gy, fx, fy);
+                else handle_left_click(app, mx, my, gx, gy, fx, fy, event->button.clicks >= 2);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 1;
             } else if (event->button.button == SDL_BUTTON_RIGHT) {
@@ -841,6 +1340,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 if (app->wiring) finish_wire(app, gx, gy);
                 else if (app->drag_kind != DRAG_NONE) finish_drag(app);
                 else if (app->marquee_active) finish_marquee_select(app);
+                else if (app->section_dragging) finish_section_draw(app, mx, my);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
                 app->panning = 0;
             }
@@ -860,6 +1360,10 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 app->marquee_cur_mx = event->motion.x;
                 app->marquee_cur_my = event->motion.y;
                 update_marquee_selection(app);
+            }
+            if (app->section_dragging) {
+                app->section_drag_cur_mx = event->motion.x;
+                app->section_drag_cur_my = event->motion.y;
             }
             if (app->drag_kind != DRAG_NONE) {
                 int gx, gy;
@@ -899,6 +1403,35 @@ void app_handle_event(App *app, const SDL_Event *event) {
                             v->x += dx;
                             v->y += dy;
                         }
+                    } else if (app->drag_kind == DRAG_SECTION_BODY) {
+                        Section *s = &app->circuit.sections[app->selected_section_id];
+                        s->x0 += dx; s->x1 += dx;
+                        s->y0 += dy; s->y1 += dy;
+                    } else if (app->drag_kind == DRAG_SECTION_HANDLE) {
+                        /* only the one grabbed corner moves; clamped against
+                           its opposite (fixed) corner so it can never cross
+                           past it and collapse/invert below
+                           SECTION_MIN_SIZE - see circuit.h. Mutated directly
+                           here rather than through circuit_set_section_rect,
+                           same as every other drag kind above updates its
+                           own fields directly instead of going through a
+                           circuit.c setter. */
+                        Section *s = &app->circuit.sections[app->selected_section_id];
+                        int corner = app->drag_section_corner;
+                        if (corner == 0 || corner == 2) s->x0 += dx; else s->x1 += dx;
+                        if (corner == 0 || corner == 1) s->y0 += dy; else s->y1 += dy;
+                        if (s->x1 - s->x0 < SECTION_MIN_SIZE) {
+                            if (corner == 0 || corner == 2) s->x0 = s->x1 - SECTION_MIN_SIZE;
+                            else s->x1 = s->x0 + SECTION_MIN_SIZE;
+                        }
+                        if (s->y1 - s->y0 < SECTION_MIN_SIZE) {
+                            if (corner == 0 || corner == 1) s->y0 = s->y1 - SECTION_MIN_SIZE;
+                            else s->y1 = s->y0 + SECTION_MIN_SIZE;
+                        }
+                    } else if (app->drag_kind == DRAG_TEXT_LABEL) {
+                        TextLabel *t = &app->circuit.text_labels[app->selected_text_label_id];
+                        t->x += dx;
+                        t->y += dy;
                     } else { /* DRAG_SELECTION */
                         for (int i = 0; i < app->circuit.component_high_water; i++) {
                             Component *c = &app->circuit.components[i];
@@ -913,6 +1446,22 @@ void app_handle_event(App *app, const SDL_Event *event) {
                             w->from_y += dy;
                             w->to_x += dx;
                             w->to_y += dy;
+                        }
+                        /* a LOCKED section stays put even while part of a
+                           bigger selection being dragged - see circuit.h's
+                           Section comment and delete_selection's identical
+                           reasoning. */
+                        for (int i = 0; i < app->circuit.section_high_water; i++) {
+                            Section *s = &app->circuit.sections[i];
+                            if (!s->in_use || !s->selected || s->locked) continue;
+                            s->x0 += dx; s->x1 += dx;
+                            s->y0 += dy; s->y1 += dy;
+                        }
+                        for (int i = 0; i < app->circuit.text_label_high_water; i++) {
+                            TextLabel *t = &app->circuit.text_labels[i];
+                            if (!t->in_use || !t->selected) continue;
+                            t->x += dx;
+                            t->y += dy;
                         }
                         apply_drag_attachments(app, dx, dy);
                     }
@@ -952,19 +1501,51 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 break;
             }
 
+            /* Same idea for a Section/Text-Label edit in progress - owns
+               every key while active (Backspace must erase a character, not
+               delete_selection() the section itself out from under the
+               field being typed). Escape here CANCELS outright (never
+               commits), unlike a click elsewhere or Enter - same split
+               layer_panel_handle_key's own Escape/Enter make. */
+            if (app->canvas_edit_kind != CANVAS_EDIT_NONE) {
+                if (sc == SDL_SCANCODE_BACKSPACE) {
+                    if (app->canvas_edit_len > 0) {
+                        app->canvas_edit_len--;
+                        app->canvas_edit_buf[app->canvas_edit_len] = '\0';
+                    }
+                } else if (sc == SDL_SCANCODE_ESCAPE) {
+                    cancel_canvas_edit(app);
+                } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
+                    commit_canvas_edit(app);
+                }
+                break;
+            }
+
+            /* every plain (unmodified) tool-switch key below explicitly
+               excludes Ctrl - without this, Ctrl+<key> would BOTH switch
+               tools AND trigger whatever the Ctrl-modified shortcut below it
+               is (this is exactly how Via's old default of V collided with
+               Ctrl+V once Paste got its own keybind: pressing Ctrl+V to
+               paste also silently switched to the Via tool as a side
+               effect). Copy/Paste/Undo/Redo already require Ctrl themselves
+               (checked further below) so this only ever excludes a
+               plain-key tool switch from firing, never blocks the
+               Ctrl-modified action it might collide with. */
+            int no_ctrl = !(event->key.keysym.mod & KMOD_CTRL);
+
             if (sc == SDL_SCANCODE_DELETE || sc == SDL_SCANCODE_BACKSPACE) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 handle_escape(app);
-            } else if (sc == app->settings.keybind[KEYBIND_WIRE]) {
+            } else if (sc == app->settings.keybind[KEYBIND_WIRE] && no_ctrl) {
                 set_active_tool(app, TOOL_WIRE);
-            } else if (sc == app->settings.keybind[KEYBIND_VIA]) {
+            } else if (sc == app->settings.keybind[KEYBIND_VIA] && no_ctrl) {
                 set_active_tool(app, TOOL_VIA);
-            } else if (sc == app->settings.keybind[KEYBIND_SELECT]) {
+            } else if (sc == app->settings.keybind[KEYBIND_SELECT] && no_ctrl) {
                 set_active_tool(app, TOOL_SELECT);
-            } else if (sc == app->settings.keybind[KEYBIND_INPUT]) {
+            } else if (sc == app->settings.keybind[KEYBIND_INPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_INPUT);
-            } else if (sc == app->settings.keybind[KEYBIND_OUTPUT]) {
+            } else if (sc == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_OUTPUT);
             } else if (sc == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
                 /* only meaningful while a placement (Components-menu pick or
@@ -982,12 +1563,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                     app->active_layer_slot = app->circuit.layer_order[pos];
                 }
             } else if (sc == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
-                copy_selected_component(app);
+                copy_selection(app);
+            } else if (sc == app->settings.keybind[KEYBIND_PASTE] && (event->key.keysym.mod & KMOD_CTRL)) {
+                paste_clipboard(app);
             } else if (sc == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+<undo key> */
                 else perform_undo(app);
             } else if (sc == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 perform_redo(app);
+            } else if (sc == app->settings.keybind[KEYBIND_SAVE] && (event->key.keysym.mod & KMOD_CTRL)) {
+                app_save_current(app); /* same fall-through-to-Save-As-if-untitled behavior as the File menu's own Save */
             } else if ((sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) && !event->key.repeat) {
                 app->shift_held = 1;
                 if (event->key.keysym.mod & KMOD_CTRL) {
@@ -1027,6 +1612,12 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 settings_panel_text_input(&app->settings_panel, event->text.text);
             } else if (layer_panel_is_editing(&app->layer_panel)) {
                 layer_panel_text_input(&app->layer_panel, event->text.text);
+            } else if (app->canvas_edit_kind != CANVAS_EDIT_NONE) {
+                int max_len = canvas_edit_max_len(app->canvas_edit_kind);
+                for (const char *p = event->text.text; *p != '\0' && app->canvas_edit_len < max_len; p++) {
+                    app->canvas_edit_buf[app->canvas_edit_len++] = *p;
+                }
+                app->canvas_edit_buf[app->canvas_edit_len] = '\0';
             }
             break;
 

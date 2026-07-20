@@ -27,8 +27,37 @@ typedef enum {
     DRAG_COMPONENT,  /* moving a whole IC body, see selected_component_id */
     DRAG_WIRE_BODY,  /* moving a whole wire (both endpoints), see drag_wire_id */
     DRAG_WIRE_NODE,  /* moving every wire endpoint coincident at one point */
-    DRAG_SELECTION   /* moving every currently-.selected component/wire together, e.g. after a marquee select */
+    DRAG_SELECTION,  /* moving every currently-.selected component/wire/section/text label together, e.g. after a marquee select */
+    DRAG_SECTION_BODY,   /* moving a whole Section rectangle, see selected_section_id */
+    DRAG_SECTION_HANDLE, /* resizing one corner of a Section, see selected_section_id/drag_section_corner */
+    DRAG_TEXT_LABEL      /* moving a Text Label, see selected_text_label_id */
 } DragKind;
+
+/* Which canvas-level text field (if any) currently owns the keyboard - see
+   canvas_edit_kind below. Section-Labeling and Text Label share this one
+   mechanism instead of each getting their own copy of layer_panel.c's
+   rename-field machinery, since both are just "type a single line of text
+   directly onto the canvas" with identical commit/cancel rules. The _NEW_
+   kinds are for something just drawn/placed and not committed to the
+   circuit at all yet (see pending_section_x0.. / pending_text_label_x/y
+   below) - committing there calls circuit_add_section/circuit_add_text_label
+   for the first time; an empty commit (or Escape) simply discards the
+   pending geometry instead. The plain kinds are retyping an EXISTING one's
+   label/text (canvas_edit_id is which). */
+typedef enum {
+    CANVAS_EDIT_NONE,
+    CANVAS_EDIT_NEW_SECTION,
+    CANVAS_EDIT_SECTION_LABEL,
+    CANVAS_EDIT_NEW_TEXT_LABEL,
+    CANVAS_EDIT_TEXT_LABEL
+} CanvasEditKind;
+/* Big enough for either buffer - TEXT_LABEL_MAX_LEN (48) is the larger of
+   the two (see circuit.h). */
+#define CANVAS_EDIT_BUF_LEN (TEXT_LABEL_MAX_LEN + 1)
+
+/* Which of App's clipboard_* groups Ctrl+C last populated - see the
+   clipboard_kind field's own comment below. */
+typedef enum { CLIPBOARD_NONE, CLIPBOARD_IC, CLIPBOARD_SECTION, CLIPBOARD_TEXT_LABEL } ClipboardKind;
 
 typedef struct {
     Circuit circuit;
@@ -50,6 +79,8 @@ typedef struct {
     /* selection (mutually exclusive) */
     int selected_component_id; /* -1 = none */
     int selected_wire_id;      /* -1 = none */
+    int selected_section_id;     /* -1 = none - see DRAG_SECTION_BODY/HANDLE */
+    int selected_text_label_id;  /* -1 = none - see DRAG_TEXT_LABEL */
 
     /* dragging with the left mouse button in Select mode - a component body,
        a whole wire body, or a wire node (every endpoint coincident at one
@@ -58,15 +89,20 @@ typedef struct {
     int drag_last_gx, drag_last_gy; /* previous frame's cursor grid cell, for computing per-frame deltas */
     int drag_wire_id;               /* which wire, only for DRAG_WIRE_BODY */
 
-    /* DRAG_SELECTION: which single component/wire was actually clicked to
-       start the drag (-1/-1 if neither applies), and whether the drag ever
-       moved anything. A plain click-and-release on an item that happens to
-       be part of a bigger existing selection should still collapse the
-       selection down to just that one item, same as clicking any other
-       unselected item always has - only an actual drag should preserve and
-       move the whole group. See finish_drag. */
-    int drag_click_component_id, drag_click_wire_id;
+    /* DRAG_SELECTION: which single component/wire/section/text label was
+       actually clicked to start the drag (-1 for whichever don't apply),
+       and whether the drag ever moved anything. A plain click-and-release on
+       an item that happens to be part of a bigger existing selection should
+       still collapse the selection down to just that one item, same as
+       clicking any other unselected item always has - only an actual drag
+       should preserve and move the whole group. See finish_drag. */
+    int drag_click_component_id, drag_click_wire_id, drag_click_section_id, drag_click_text_label_id;
     int drag_moved;
+
+    /* DRAG_SECTION_HANDLE: which of the section's 4 corners is being
+       dragged - 0=top-left, 1=top-right, 2=bottom-left, 3=bottom-right, see
+       section_corner_screen_pos in render.h. */
+    int drag_section_corner;
 
     /* DRAG_COMPONENT/DRAG_WIRE_BODY: wires whose endpoint coincided with one
        of the dragged thing's anchor points (pins, or the wire's own two ends)
@@ -110,15 +146,48 @@ typedef struct {
     int marquee_start_mx, marquee_start_my;
     int marquee_cur_mx, marquee_cur_my;
 
-    /* Ctrl+C copy: copies a component and immediately starts a
-       placement-at-cursor preview for it, same click-to-place interaction as
-       choosing an IC from the Components dropdown (see app_pending_place_ic)
-       but not tied to a menu selection. clipboard_ic_def is left set after
-       pasting ends (harmless - it just points at static IC_Def data owned by
-       the registry); pasting is what actually gates the preview/placement
-       behavior. */
+    /* TOOL_SECTION drag-to-draw: same screen-space-until-release tracking as
+       the marquee box above, started on a left-button-down while
+       TOOL_SECTION is active anywhere on the canvas (no node/component/wire
+       hit-test to fall through first - Section-Labeling always draws,
+       there's nothing else a click could mean in this tool). Released ->
+       converted to a grid rect and handed to canvas_edit_kind
+       (CANVAS_EDIT_NEW_SECTION) rather than added to the circuit directly -
+       see finish_section_draw in input_handler.c. */
+    int section_dragging;
+    int section_drag_start_mx, section_drag_start_my;
+    int section_drag_cur_mx, section_drag_cur_my;
+
+    /* Canvas-level text editing shared by Section-Labeling and Text Label -
+       see CanvasEditKind above. canvas_edit_id is which circuit->sections[]/
+       text_labels[] index is being retyped, for the two "existing" kinds.
+       pending_section_x0.. / pending_text_label_x/y hold the just-drawn/
+       placed geometry for the two "_NEW_" kinds, which don't exist in the
+       circuit at all until this commits with non-empty text. */
+    CanvasEditKind canvas_edit_kind;
+    int canvas_edit_id;
+    char canvas_edit_buf[CANVAS_EDIT_BUF_LEN];
+    int canvas_edit_len;
+    int pending_section_x0, pending_section_y0, pending_section_x1, pending_section_y1;
+    int pending_text_label_x, pending_text_label_y;
+
+    /* Ctrl+C copy: copies whatever's under the cursor (or, failing that, the
+       current selection, only if it's exactly one item) and remembers it
+       for Ctrl+V. A copied Component still immediately starts its existing
+       click-to-place preview too (see app_pending_place_ic) - clipboard_ic_def
+       is left set after pasting ends (harmless - it just points at static
+       IC_Def data owned by the registry); pasting is what actually gates the
+       preview/placement behavior. A copied Section/Text Label has no
+       equivalent "click to place" ghost - Ctrl+V instead drops a copy
+       immediately at wherever the cursor is AT THAT MOMENT (see
+       paste_clipboard in input_handler.c). clipboard_kind is which of the
+       three clipboard_* groups below is actually populated. */
+    ClipboardKind clipboard_kind;
     const IC_Def *clipboard_ic_def;
     int pasting;
+    int clipboard_section_w, clipboard_section_h; /* size only - a paste's position always comes from the cursor at paste time */
+    char clipboard_section_label[SECTION_LABEL_MAX_LEN + 1];
+    char clipboard_text_label_text[TEXT_LABEL_MAX_LEN + 1];
 
     /* Rotation (0-3 quarter turns, see Component.rotation) the NEXT IC
        placed will get - applies to both an IC chosen from the Components

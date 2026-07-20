@@ -62,3 +62,13 @@ void text_util_measure(TTF_Font *font, const char *text, int *out_w, int *out_h)
     }
     TTF_SizeUTF8(font, text, out_w, out_h);
 }
+
+void text_util_font_metrics(TTF_Font *font, int *out_ascent, int *out_descent) {
+    if (font == NULL) {
+        *out_ascent = 0;
+        *out_descent = 0;
+        return;
+    }
+    *out_ascent = TTF_FontAscent(font);
+    *out_descent = TTF_FontDescent(font);
+}

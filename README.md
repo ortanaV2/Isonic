@@ -51,6 +51,10 @@ tool.
 - **Configurable settings** — autosave interval, which corner the Layers
   panel docks to, and every tool/action keybind are rebindable from the
   Settings popup and persist across sessions.
+- **Annotations** — Section-Labeling draws a labeled, resizable, lockable
+  rectangle to frame off part of a schematic; Text Label drops a single
+  freestanding line of text — both purely organizational, with no effect on
+  simulation.
 
 ## Building
 
@@ -80,20 +84,23 @@ independent of any schematic file.
 - **Mouse wheel** — zoom (centered on the cursor)
 - **Mouse back/forward buttons** — undo/redo
 - **W** — switch to the Wire tool
-- **V** — switch to the Via tool
+- **F** — switch to the Via tool
 - **Space** — switch to Select mode
 - **Q** — switch to the Input tool
 - **E** — switch to the Output tool
-- **R** — while an IC is pending placement (Components menu or Ctrl+C paste),
-  rotate it 90° counterclockwise before dropping it
+- **R** — while an IC is pending placement (Components menu, Ctrl+C, or
+  Ctrl+V), rotate it 90° counterclockwise before dropping it
 - **1-9** — pick which layer new wires route on
 - **Shift (hold)** — preview all layers at once; **Ctrl+Shift** toggles that
   preview locked on/off
 - **Delete / Backspace** — delete the current selection
 - **Escape** — cancel the current action, close an open popup, or drop the
   selection
-- **Ctrl+C** — copy the selected component and start placing copies at the
-  cursor
+- **Ctrl+C** — copy whatever's under the cursor (a component, a Section, or
+  a Text Label) and, for a component, start placing copies at the cursor
+- **Ctrl+V** — paste another copy of whatever was last copied; a Section or
+  Text Label drops immediately at the cursor's current position
+- **Ctrl+S** — save (falls through to Save As if the schematic has no path yet)
 - **Ctrl+Z / Ctrl+Y** — undo / redo (**Ctrl+Shift+Z** also redoes)
 
 All of the above (except the number keys, Delete/Backspace/Escape, and the
@@ -120,8 +127,28 @@ start placing it:
   Window (prompts to save unsaved changes first)
 - **Settings** — autosave frequency, Layers panel corner, and keybind
   rebinding, with Save and Reset Default
+- **Section-Labeling / Text Label** — a separate group to the right of
+  Components, for framing and annotating a schematic rather than building
+  it; see "Annotations" below
 - **Manage Data** — appears when a single AT28C64B is selected; opens a panel
   to view/edit its memory contents directly
+
+### Annotations
+
+**Section-Labeling** drags out a light-gray rectangle to frame off part of a
+schematic, labeled at its top-right corner. In Select mode you can drag its
+body to move it, drag any of its 4 corners to resize it, or double-click its
+label to rename it — the small lock icon next to the label freezes all three
+against accidental changes (a locked section can still be selected and
+inspected, just not moved/resized/renamed, and stays out of Delete's way
+too). Typing the label happens immediately after you draw the rectangle;
+Enter or clicking elsewhere confirms it, Escape (or confirming empty)
+discards the whole section.
+
+**Text Label** places a single line of freestanding text with a click, and
+starts you typing it immediately the same way. Double-click any placed label
+to retype it. Neither tool draws anything electrical — both are purely for
+keeping your bearings in a large schematic.
 
 ### Layers panel
 

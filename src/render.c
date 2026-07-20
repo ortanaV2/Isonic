@@ -737,9 +737,26 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
         int tw, th;
         text_util_measure(font_large, def->name, &tw, &th);
         if (tw > 0 && th > 0) {
-            float fit_by_length = (h * 0.6f) / tw;    /* text width becomes the vertical extent once rotated */
-            float fit_by_thickness = (w * 0.6f) / th; /* text height becomes the horizontal extent once rotated */
-            float name_scale = fit_by_length < fit_by_thickness ? fit_by_length : fit_by_thickness;
+            /* at rotation 0/180 the body is tall/narrow, so the name is
+               drawn rotated -90 (vertical) to run along it - tw (text
+               width) becomes the body's vertical extent and th its
+               horizontal one. At rotation 90/270 ("flach liegend") the body
+               is wide/short instead, and the name is drawn upright (0
+               degrees, actually readable rather than sideways) - so tw/th
+               map onto w/h directly instead, NOT swapped the same way. Using
+               the swapped mapping here regardless of angle (the original
+               bug) starved the fit against the body's now-tiny short axis,
+               which is why the name rendered far smaller than it should
+               have specifically on a rotated IC. */
+            float fit_a, fit_b;
+            if (c->rotation & 1) {
+                fit_a = (w * 0.6f) / tw;
+                fit_b = (h * 0.6f) / th;
+            } else {
+                fit_a = (h * 0.6f) / tw;
+                fit_b = (w * 0.6f) / th;
+            }
+            float name_scale = fit_a < fit_b ? fit_a : fit_b;
             float text_angle = (c->rotation & 1) ? 0.0f : -90.0f;
             if (name_scale > 0.0f) {
                 text_util_draw_scaled_rotated(renderer, font_large, def->name, sx + w / 2, sy + h / 2,
@@ -755,6 +772,329 @@ static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam,
         component_pin_world_pos(c, pi, &tip_x, &tip_y);
         draw_lone_connection_dot(renderer, cam, circuit, tip_x, tip_y);
     }
+}
+
+/* ── Section-Labeling / Text Labels ──────────────────────────────────────────
+   Purely organizational canvas annotations (see circuit.h's Section/
+   TextLabel) - no pins, no nets, nothing electrical. Same light gray as
+   IC_BORDER_COLOR (the app's one existing "neutral UI chrome" gray) rather
+   than inventing a second one. */
+static const SDL_Color SECTION_COLOR = { 190, 190, 196, 255 };
+#define SECTION_LABEL_GAP_PX 6.0f  /* screen-space, at zoom 1.0 - see zoom_factor */
+#define SECTION_LOCK_ICON_PX 14.0f
+#define SECTION_HANDLE_PX 8.0f
+/* small aesthetic-only lift on top of the label's plain cell-centered
+   position - see section_label_bounds. */
+#define SECTION_LABEL_EXTRA_LIFT_PX 3.0f
+
+/* Blinking text-entry caret shared by both Section-label and Text-Label
+   editing below. Height is the font's own ASCENT (baseline-to-top) scaled
+   by zoom - deliberately the SAME metric cell_vcenter_offset positions
+   text_y with (see its own comment), not the fixed "M" glyph's full
+   ascent-to-descent box a first pass at this used: text_y already assumes
+   a height of exactly one ascent when centering on the cell, so drawing
+   the caret any taller (or shorter) than that made it visibly extend past
+   center instead of spanning the cell symmetrically. Unlike layer_panel.c's
+   own draw_text_cursor, which uses a fixed 14px because its text lives at
+   a fixed UI scale - canvas text is scaled by the current zoom (see
+   `scale`), so a fixed pixel height here would either dwarf or vanish
+   under the letters depending on zoom. */
+static void draw_canvas_text_cursor(SDL_Renderer *renderer, TTF_Font *font, const char *text, int text_x, int text_y,
+                                     float scale, SDL_Color col) {
+    if ((SDL_GetTicks() / 500) % 2 != 0) return;
+    int tw = 0, th = 0;
+    if (font != NULL) text_util_measure(font, text, &tw, &th);
+    (void)th;
+    int ascent = 0, descent = 0;
+    if (font != NULL) text_util_font_metrics(font, &ascent, &descent);
+    (void)descent;
+    int stw = (int)lroundf(tw * scale);
+    int sh = (int)lroundf(ascent * scale);
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
+    SDL_RenderDrawLine(renderer, text_x + stw + 1, text_y, text_x + stw + 1, text_y + sh);
+}
+
+/* Padlock pictogram: a body, two straight "riser" legs, and a shackle arc
+   joining their tops via draw_arc_strip (same technique the IC body's
+   pin-1 notch uses for its own arc) - the legs run straight up a bit before
+   the arc takes over, same as a real shackle, rather than the arc sitting
+   flush on the body as a bare semicircle (which read as barely visible).
+   Vertically balanced around the icon box's own middle (the arc's peak
+   reaches nearly to the top, the body's bottom nearly to the bottom)
+   instead of being weighted toward the bottom half, which is what made the
+   very first version look like it was sitting too low relative to
+   whatever text sits next to it (see section_label_bounds, which centers
+   this box on the label's own height - only works if the icon's drawn
+   content is itself centered in that box).
+
+   Closed (locked) draws both risers, reading as a complete staple. Open
+   (unlocked) is the EXACT SAME shape, just with the right riser left out -
+   the arc's right end and the body below it are no longer connected by
+   anything, reading as "unhooked on that side" while the left leg still
+   visibly holds the shackle in place. A rotated copy of the whole shackle
+   (the first two passes at this) either just looked offset or looked
+   identical to closed at this icon's size - simply dropping a leg reads as
+   unmistakably open even this small. */
+static void draw_lock_icon(SDL_Renderer *renderer, const SDL_Rect *box, int locked, SDL_Color col) {
+    float cx = box->x + box->w * 0.5f;
+    float body_top = box->y + box->h * 0.50f;
+    float body_h = box->h * 0.42f;
+    float body_w = box->w * 0.78f;
+    float thick = box->w * 0.11f;
+    float shackle_r = box->w * 0.22f;
+    float riser_h = box->h * 0.20f;
+    float shackle_base_y = body_top - riser_h;
+
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
+    draw_thick_line(renderer, (int)lroundf(cx - shackle_r), (int)lroundf(body_top),
+                     (int)lroundf(cx - shackle_r), (int)lroundf(shackle_base_y), thick);
+    if (locked) {
+        draw_thick_line(renderer, (int)lroundf(cx + shackle_r), (int)lroundf(body_top),
+                         (int)lroundf(cx + shackle_r), (int)lroundf(shackle_base_y), thick);
+    }
+    draw_arc_strip(renderer, cx, shackle_base_y, shackle_r, ISONIC_TAU * 0.5f, ISONIC_TAU, thick);
+
+    SDL_Rect body = { (int)lroundf(cx - body_w * 0.5f), (int)lroundf(body_top), (int)lroundf(body_w), (int)lroundf(body_h) };
+    SDL_RenderFillRect(renderer, &body);
+}
+
+/* Vertical offset (screen px, already zoom-scaled) from a grid CELL's
+   top-left lattice point up to where a single line of text anchored to
+   that cell should actually start drawing, so the text (and its cursor
+   while typing) sits vertically CENTERED within the cell - not centered ON
+   the lattice point itself, which splits the difference between that cell
+   and the one above it instead of sitting inside either.
+
+   Centers on the font's ASCENT alone (baseline-to-top), not the full
+   ascent-to-descent line box text_util_measure/TTF_RenderUTF8_Blended
+   actually render into: ordinary text with no descenders (g/y/p/q/j) only
+   ever draws ink in the ascent portion, so treating the full box (which
+   includes the descent's empty space below the baseline) as "the glyph"
+   pulls the centering down below where the text visually reads as
+   centered. Using a font-level metric instead of measuring any particular
+   string also means the position never jitters as you type/backspace
+   different characters. Shared by section_label_bounds, text_label_bounds,
+   and both their _preview siblings, so a not-yet-committed label previews
+   at the exact same spot its committed self will render at, and reused
+   as-is for the blinking caret (draw_canvas_text_cursor) so both sit at
+   the exact same height - no separate correction applied to one but not
+   the other. */
+static int cell_vcenter_offset(TTF_Font *font, float scale, float cell) {
+    int ascent = 0, descent = 0;
+    text_util_font_metrics(font, &ascent, &descent);
+    (void)descent;
+    float half_ascent = ascent * scale * 0.5f;
+    float half_cell = cell * 0.5f;
+    return (int)lroundf(half_ascent - half_cell);
+}
+
+int section_label_bounds(TTF_Font *font, const Camera *cam, const Section *s, SDL_Rect *out_label, SDL_Rect *out_lock) {
+    if (font == NULL) return 0;
+    float cell = camera_cell_px(cam);
+    float scale = label_scale(cell);
+    float zoom = zoom_factor(cell);
+    int tw, th;
+    text_util_measure(font, (s->label[0] != '\0') ? s->label : " ", &tw, &th);
+    int stw = (int)lroundf(tw * scale);
+    int sth = (int)lroundf(th * scale);
+    float gap = SECTION_LABEL_GAP_PX * zoom;
+
+    /* the label lives in the grid cell directly above the section's top
+       edge (from y0-1 to y0), vertically centered in THAT cell exactly like
+       a Text Label centers in its own anchor cell - not a fixed pixel gap
+       above the rectangle, which gave the label no relationship to the
+       grid at all (see cell_vcenter_offset). Still right-aligned to the
+       section's own right edge (x1) horizontally, unchanged. */
+    int sx1, cell_top_sy;
+    camera_grid_to_screen(cam, s->x1, s->y0 - 1, &sx1, &cell_top_sy);
+    /* a small extra lift on top of the plain cell-centered position - purely
+       an aesthetic nudge (unlike cell_vcenter_offset, not trying to line up
+       with anything in particular), since sitting exactly cell-centered
+       read as very slightly low for this specific label. */
+    int extra_lift = (int)lroundf(SECTION_LABEL_EXTRA_LIFT_PX * zoom);
+    int label_top = cell_top_sy - cell_vcenter_offset(font, scale, cell) - extra_lift;
+    *out_label = (SDL_Rect){ sx1 - stw, label_top, stw, sth };
+
+    int lock_size = (int)lroundf(SECTION_LOCK_ICON_PX * zoom);
+    int lock_right = out_label->x - (int)lroundf(gap * 0.5f);
+    *out_lock = (SDL_Rect){ lock_right - lock_size, label_top + (sth - lock_size) / 2, lock_size, lock_size };
+    return 1;
+}
+
+void section_corner_screen_pos(const Camera *cam, const Section *s, int corner, int *out_x, int *out_y) {
+    int gx = (corner == 0 || corner == 2) ? s->x0 : s->x1; /* 0=TL, 1=TR, 2=BL, 3=BR */
+    int gy = (corner == 0 || corner == 1) ? s->y0 : s->y1;
+    camera_grid_to_screen(cam, gx, gy, out_x, out_y);
+}
+
+/* Screen-space margin (at zoom 1.0) around a section's own rectangle that
+   still counts as "near" for showing its lock icon - see
+   section_lock_icon_visible. */
+#define SECTION_LOCK_HOVER_RADIUS_PX 16.0f
+/* Below this cell size the icon would render as a near-illegible speck AND
+   be genuinely hard to land a click on - hidden entirely rather than either,
+   same "just stop offering it" reasoning PIN_LABEL_MIN_CELL_PX uses for pin
+   labels. Deliberately well above that 9.0f: a resize handle or lock toggle
+   needs more room to stay comfortably clickable than a label just needs to
+   stay legible. */
+#define SECTION_LOCK_MIN_CELL_PX 14.0f
+
+/* Whether a section's lock icon should be shown/interactive at all right
+   now - hidden by default, and only revealed by exactly two triggers: the
+   cursor sits within a small circle around the icon's own center, or the
+   cursor is hovering the section's label text (which always has its own
+   hitbox, regardless of the icon's visibility). A lock toggle sitting
+   permanently in view next to every section's label was visual noise most
+   of the time it wasn't actually being used - and merely being somewhere
+   over the section's body/border used to count too, which revealed it far
+   more often than intended. Also hidden below SECTION_LOCK_MIN_CELL_PX
+   regardless of hover, once zoomed out far enough that it wouldn't render
+   cleanly or be easy to hit anyway. Shared by rendering and
+   input_handler.c's click hit-testing so a click is never accepted on
+   something that isn't actually being drawn (or vice versa). */
+int section_lock_icon_visible(TTF_Font *font, const Camera *cam, const Section *s, int hover_x, int hover_y) {
+    float cell = camera_cell_px(cam);
+    if (cell < SECTION_LOCK_MIN_CELL_PX) return 0;
+
+    SDL_Rect label_rect, lock_rect;
+    if (!section_label_bounds(font, cam, s, &label_rect, &lock_rect)) return 0;
+    if (hover_x >= label_rect.x && hover_x < label_rect.x + label_rect.w &&
+        hover_y >= label_rect.y && hover_y < label_rect.y + label_rect.h) {
+        return 1;
+    }
+
+    float lock_cx = lock_rect.x + lock_rect.w * 0.5f;
+    float lock_cy = lock_rect.y + lock_rect.h * 0.5f;
+    float radius = SECTION_LOCK_HOVER_RADIUS_PX * zoom_factor(cell);
+    float dx = hover_x - lock_cx, dy = hover_y - lock_cy;
+    return (dx * dx + dy * dy) <= radius * radius;
+}
+
+/* Shared by render_sections/render_section_preview - draws just the
+   rectangle outline (no label/lock/handles, those differ enough between a
+   committed section and one still being typed for the first time that each
+   caller draws them itself). */
+static void draw_section_rect(SDL_Renderer *renderer, const Camera *cam, int x0, int y0, int x1, int y1, SDL_Color col) {
+    float cell = camera_cell_px(cam);
+    float thickness = wire_thickness_px(cell);
+    int sx0, sy0, sx1, sy1;
+    camera_grid_to_screen(cam, x0, y0, &sx0, &sy0);
+    camera_grid_to_screen(cam, x1, y1, &sx1, &sy1);
+    SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
+    draw_thick_line(renderer, sx0, sy0, sx1, sy0, thickness);
+    draw_thick_line(renderer, sx1, sy0, sx1, sy1, thickness);
+    draw_thick_line(renderer, sx1, sy1, sx0, sy1, thickness);
+    draw_thick_line(renderer, sx0, sy1, sx0, sy0, thickness);
+}
+
+void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
+                      int editing_id, const char *editing_text, int hover_x, int hover_y) {
+    float cell = camera_cell_px(cam);
+    float scale = label_scale(cell);
+
+    for (int i = 0; i < circuit->section_high_water; i++) {
+        const Section *s = &circuit->sections[i];
+        if (!s->in_use) continue;
+        int being_edited = (i == editing_id);
+
+        SDL_Color rect_col = s->selected ? SELECTION_COLOR : SECTION_COLOR;
+        draw_section_rect(renderer, cam, s->x0, s->y0, s->x1, s->y1, rect_col);
+
+        SDL_Rect label_rect, lock_rect;
+        if (section_label_bounds(font, cam, s, &label_rect, &lock_rect)) {
+            const char *shown = being_edited ? editing_text : s->label;
+            /* white, same as every other on-canvas label (LABEL_COLOR) - not
+               SECTION_COLOR, which is for the rectangle/lock icon's own
+               "chrome" gray, not for text meant to actually be read. */
+            SDL_Color text_col = s->selected ? SELECTION_COLOR : LABEL_COLOR;
+            text_util_draw_scaled(renderer, font, shown, label_rect.x, label_rect.y, text_col, scale);
+            if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, label_rect.x, label_rect.y, scale, text_col);
+
+            if (section_lock_icon_visible(font, cam, s, hover_x, hover_y)) {
+                int lock_hovered = (hover_x >= lock_rect.x && hover_x < lock_rect.x + lock_rect.w &&
+                                     hover_y >= lock_rect.y && hover_y < lock_rect.y + lock_rect.h);
+                SDL_Color lock_col = lock_hovered ? SELECTION_COLOR : SECTION_COLOR;
+                draw_lock_icon(renderer, &lock_rect, s->locked, lock_col);
+            }
+        }
+
+        if (s->selected && !s->locked) {
+            /* round, same shape/color family as a selected wire's own
+               endpoint dots (SELECTION_DOT_COLOR) - not a square, so a
+               resize handle reads as "grab this point" the same way every
+               other connection point in the app already does. */
+            float handle_r = (SECTION_HANDLE_PX * 0.5f) * zoom_factor(cell);
+            SDL_SetRenderDrawColor(renderer, SELECTION_DOT_COLOR.r, SELECTION_DOT_COLOR.g, SELECTION_DOT_COLOR.b, 255);
+            for (int corner = 0; corner < 4; corner++) {
+                int hx, hy;
+                section_corner_screen_pos(cam, s, corner, &hx, &hy);
+                draw_filled_circle(renderer, hx, hy, handle_r);
+            }
+        }
+    }
+}
+
+void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x0, int y0, int x1, int y1,
+                             const char *editing_text) {
+    draw_section_rect(renderer, cam, x0, y0, x1, y1, SECTION_COLOR);
+    if (font == NULL) return;
+    float cell = camera_cell_px(cam);
+    float scale = label_scale(cell);
+    int tw, th;
+    text_util_measure(font, editing_text, &tw, &th);
+    (void)th;
+    int stw = (int)lroundf(tw * scale);
+    /* same grid-cell-centered vertical placement as a committed section's
+       own label (section_label_bounds) - the cell directly above the
+       section's top edge, not a fixed pixel gap. */
+    int sx1, cell_top_sy;
+    camera_grid_to_screen(cam, x1, y0 - 1, &sx1, &cell_top_sy);
+    int label_x = sx1 - stw;
+    int extra_lift = (int)lroundf(SECTION_LABEL_EXTRA_LIFT_PX * zoom_factor(cell));
+    int label_y = cell_top_sy - cell_vcenter_offset(font, scale, cell) - extra_lift;
+    text_util_draw_scaled(renderer, font, editing_text, label_x, label_y, LABEL_COLOR, scale);
+    draw_canvas_text_cursor(renderer, font, editing_text, label_x, label_y, scale, LABEL_COLOR);
+}
+
+int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL_Rect *out) {
+    if (font == NULL) return 0;
+    float cell = camera_cell_px(cam);
+    float scale = label_scale(cell);
+    int tw, th;
+    text_util_measure(font, (t->text[0] != '\0') ? t->text : " ", &tw, &th);
+    int sx, sy;
+    camera_grid_to_screen(cam, t->x, t->y, &sx, &sy);
+    *out = (SDL_Rect){ sx, sy - cell_vcenter_offset(font, scale, cell), (int)lroundf(tw * scale), (int)lroundf(th * scale) };
+    return 1;
+}
+
+void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
+                         int editing_id, const char *editing_text, int hover_x, int hover_y) {
+    (void)hover_x; (void)hover_y; /* no hover-only affordance on a plain text label, unlike a section's lock icon */
+    float scale = label_scale(camera_cell_px(cam));
+    for (int i = 0; i < circuit->text_label_high_water; i++) {
+        const TextLabel *t = &circuit->text_labels[i];
+        if (!t->in_use) continue;
+        int being_edited = (i == editing_id);
+        SDL_Rect bounds;
+        if (!text_label_bounds(font, cam, t, &bounds)) continue;
+        const char *shown = being_edited ? editing_text : t->text;
+        SDL_Color col = t->selected ? SELECTION_COLOR : LABEL_COLOR;
+        text_util_draw_scaled(renderer, font, shown, bounds.x, bounds.y, col, scale);
+        if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, bounds.x, bounds.y, scale, col);
+    }
+}
+
+void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x, int y,
+                                const char *editing_text) {
+    if (font == NULL) return;
+    float cell = camera_cell_px(cam);
+    float scale = label_scale(cell);
+    int sx, sy;
+    camera_grid_to_screen(cam, x, y, &sx, &sy);
+    sy -= cell_vcenter_offset(font, scale, cell);
+    text_util_draw_scaled(renderer, font, editing_text, sx, sy, LABEL_COLOR, scale);
+    draw_canvas_text_cursor(renderer, font, editing_text, sx, sy, scale, LABEL_COLOR);
 }
 
 /* Every wire-drawing pass in render_circuit below iterates wires in THIS

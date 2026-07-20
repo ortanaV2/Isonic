@@ -15,9 +15,11 @@ typedef enum {
     KEYBIND_INPUT,
     KEYBIND_OUTPUT,
     KEYBIND_COPY,
+    KEYBIND_PASTE,
     KEYBIND_UNDO,
     KEYBIND_REDO,
     KEYBIND_ROTATE,
+    KEYBIND_SAVE,
     KEYBIND_ACTION_COUNT
 } KeybindAction;
 
@@ -30,9 +32,9 @@ typedef struct {
 /* Row label for the Settings popup's Keybind section, e.g. "Wire Tool". */
 const char *keybind_action_label(KeybindAction action);
 
-/* Today's hardcoded scancodes (W/V/Space/Q/E/Ctrl+C/Ctrl+Z/Ctrl+Y/R), autosave
-   off, Layers panel on the right - a user who never opens Settings sees zero
-   behavior change from before this feature existed. */
+/* Today's hardcoded scancodes (W/F/Space/Q/E/Ctrl+C/Ctrl+V/Ctrl+Z/Ctrl+Y/R/
+   Ctrl+S), autosave off, Layers panel on the right - a user who never opens
+   Settings sees zero behavior change from before this feature existed. */
 void settings_defaults(Settings *settings);
 
 /* Loads from %APPDATA%\Isonic\settings.ini (see platform_settings_path in

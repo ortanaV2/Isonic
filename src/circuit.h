@@ -81,6 +81,50 @@ typedef struct {
     int layer_slot_a, layer_slot_b;
 } Via;
 
+/* 32/64 - schematic annotations, not electrical structure, so there's no
+   reason for these to scale with MAX_COMPONENTS/MAX_WIRES the way vias do;
+   plenty of headroom for organizing even a large schematic into sections. */
+#define MAX_SECTIONS 32
+#define MAX_TEXT_LABELS 64
+#define SECTION_LABEL_MAX_LEN 32
+#define TEXT_LABEL_MAX_LEN 48
+/* Smallest a section's rectangle may ever be (grid cells, both axes) - keeps
+   a degenerate zero/negative-size drag or corner-handle drag from ever
+   collapsing it into something invisible/unselectable. */
+#define SECTION_MIN_SIZE 1
+
+/* A purely visual grouping rectangle - "Section-Labeling" - with no
+   electrical meaning at all (no pins, doesn't participate in
+   circuit_rebuild_nets, never saved/loaded as anything but its own
+   geometry+text). x0/y0/x1/y1 are grid corners, always kept normalized
+   (x0<=x1, y0<=y1) by circuit_add_section/circuit_set_section_rect below -
+   callers never need to sort them themselves, e.g. after dragging a corner
+   handle past the opposite one. locked freezes it against move/resize/
+   rename (see input_handler.c) - deliberately NOT against selection or
+   deletion, same as most design tools' own "lock" semantics... except
+   Isonic's delete_selection DOES also respect it (see its own comment) -
+   locking is meant to mean "leave this alone", and an accidental Delete
+   while multi-selecting nearby components is exactly the kind of accident
+   it exists to prevent. */
+typedef struct {
+    int in_use;
+    int x0, y0, x1, y1;
+    char label[SECTION_LABEL_MAX_LEN + 1];
+    int locked;
+    int selected;
+} Section;
+
+/* A single freestanding line of text placed on the canvas - "just a label",
+   no rectangle, no lock, nothing electrical. (x,y) is the grid point its
+   text grows right and down from (matching how every other on-canvas label
+   in this app anchors from a top-left-ish point). */
+typedef struct {
+    int in_use;
+    int x, y;
+    char text[TEXT_LABEL_MAX_LEN + 1];
+    int selected;
+} TextLabel;
+
 typedef struct {
     Component components[MAX_COMPONENTS];
     int component_high_water;
@@ -91,6 +135,12 @@ typedef struct {
 
     Via vias[MAX_VIAS];
     int via_high_water;
+
+    Section sections[MAX_SECTIONS];
+    int section_high_water;
+
+    TextLabel text_labels[MAX_TEXT_LABELS];
+    int text_label_high_water;
 
     /* layers[] is a fixed-slot table (like components/wires above) - a
        layer's slot index is its stable identity, referenced by
@@ -188,5 +238,31 @@ int circuit_wire_layer_at_point(const Circuit *circuit, int x, int y);
 /* True if a component footprint of size (w,h) at (x,y) would overlap an existing
    component (other than ignore_id). Used to keep placements from stacking. */
 int circuit_footprint_overlaps(const Circuit *circuit, int x, int y, int w, int h, int ignore_id);
+
+/* Adds a Section, normalizing the two corners itself (either diagonal works)
+   and clamping to SECTION_MIN_SIZE - so callers never need to sort/validate
+   a just-dragged rectangle themselves. Returns -1 if the table's full. */
+int circuit_add_section(Circuit *circuit, int x0, int y0, int x1, int y1, const char *label);
+void circuit_remove_section(Circuit *circuit, int id);
+/* Re-normalizes/clamps the same way circuit_add_section does - used both
+   when whole-section dragging (all four corners shift by the same delta, so
+   this is overkill but harmless there) and when a single corner handle is
+   dragged (where it actually matters, including the case where that corner
+   gets dragged past its opposite one). */
+void circuit_set_section_rect(Circuit *circuit, int id, int x0, int y0, int x1, int y1);
+/* Topmost (highest id - i.e. most recently added) in-use section whose
+   RECTANGLE OUTLINE (not its filled interior - see the .c file) passes
+   within tolerance of (fx,fy), or -1. A corner is just where two border
+   segments meet, so this alone covers hitting a corner point too, without a
+   separate check. (fx,fy) is the cursor in float grid space (unrounded),
+   same convention as circuit_find_wire_at. Its label/lock-button/corner-
+   handles are screen-space-only widgets with no grid-space equivalent
+   (font-dependent sizing), so they're hit-tested directly in
+   input_handler.c against render.c's shared bounds helpers instead of
+   through here. */
+int circuit_find_section_at(const Circuit *circuit, float fx, float fy, float tolerance);
+
+int circuit_add_text_label(Circuit *circuit, int x, int y, const char *text);
+void circuit_remove_text_label(Circuit *circuit, int id);
 
 #endif

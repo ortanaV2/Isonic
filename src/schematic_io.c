@@ -113,6 +113,24 @@ int schematic_save(const Circuit *circuit, const char *path) {
         kv_write_line(f, line);
     }
 
+    /* label=... is the last field and may contain spaces - same free-text-
+       tail convention as layer's own name=..., see schematic_load. */
+    for (int i = 0; i < circuit->section_high_water; i++) {
+        const Section *s = &circuit->sections[i];
+        if (!s->in_use) continue;
+        snprintf(line, sizeof(line), "section x0=%d y0=%d x1=%d y1=%d locked=%d label=%s",
+                 s->x0, s->y0, s->x1, s->y1, s->locked, s->label);
+        kv_write_line(f, line);
+    }
+
+    /* text=... is the last field, same convention. */
+    for (int i = 0; i < circuit->text_label_high_water; i++) {
+        const TextLabel *t = &circuit->text_labels[i];
+        if (!t->in_use) continue;
+        snprintf(line, sizeof(line), "text_label x=%d y=%d text=%s", t->x, t->y, t->text);
+        kv_write_line(f, line);
+    }
+
     fclose(f);
     return 1;
 }
@@ -270,6 +288,52 @@ int schematic_load(Circuit *circuit, const char *path) {
                 }
             }
             circuit_add_via(circuit, x, y, la, lb);
+
+        } else if (strcmp(keyword, "section") == 0) {
+            int x0 = 0, y0 = 0, x1 = 0, y1 = 0, locked = 0;
+            char label[SECTION_LABEL_MAX_LEN + 1] = "";
+
+            /* label=... is the last field and may contain spaces - sliced
+               directly out of the untouched line, same convention as
+               layer's own name=, see schematic_save. */
+            const char *label_eq = strstr(cursor, "label=");
+            if (label_eq != NULL) {
+                strncpy(label, label_eq + 6, sizeof(label) - 1);
+                label[sizeof(label) - 1] = '\0';
+            }
+
+            char tok[64], key[32], val[64];
+            while (kv_next_token(&cursor, tok, sizeof(tok))) {
+                if (strncmp(tok, "label=", 6) == 0) break;
+                if (!kv_split_kv(tok, key, sizeof(key), val, sizeof(val))) continue;
+                if (strcmp(key, "x0") == 0) x0 = atoi(val);
+                else if (strcmp(key, "y0") == 0) y0 = atoi(val);
+                else if (strcmp(key, "x1") == 0) x1 = atoi(val);
+                else if (strcmp(key, "y1") == 0) y1 = atoi(val);
+                else if (strcmp(key, "locked") == 0) locked = atoi(val);
+            }
+            int sec_id = circuit_add_section(circuit, x0, y0, x1, y1, label);
+            if (sec_id >= 0) circuit->sections[sec_id].locked = locked;
+
+        } else if (strcmp(keyword, "text_label") == 0) {
+            int x = 0, y = 0;
+            char text[TEXT_LABEL_MAX_LEN + 1] = "";
+
+            /* text=... is the last field, same free-text-tail convention. */
+            const char *text_eq = strstr(cursor, "text=");
+            if (text_eq != NULL) {
+                strncpy(text, text_eq + 5, sizeof(text) - 1);
+                text[sizeof(text) - 1] = '\0';
+            }
+
+            char tok[64], key[32], val[64];
+            while (kv_next_token(&cursor, tok, sizeof(tok))) {
+                if (strncmp(tok, "text=", 5) == 0) break;
+                if (!kv_split_kv(tok, key, sizeof(key), val, sizeof(val))) continue;
+                if (strcmp(key, "x") == 0) x = atoi(val);
+                else if (strcmp(key, "y") == 0) y = atoi(val);
+            }
+            circuit_add_text_label(circuit, x, y, text);
         }
         /* any other/unrecognized keyword is silently skipped - forward compat */
     }

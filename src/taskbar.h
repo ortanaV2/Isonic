@@ -9,7 +9,14 @@
 /* TOOL_PLACE_IC is generic - which specific IC it places lives in
    App.place_ic_name (app.h), chosen from the Components dropdown below, not
    encoded in the Tool value itself. That's what lets the menu grow without
-   touching this enum. */
+   touching this enum.
+
+   TOOL_SECTION/TOOL_TEXT_LABEL sit in their own visually separate group in
+   the taskbar, to the right of Components (see GROUP_GAP in taskbar.c's
+   taskbar_layout) - they're canvas annotation tools (see circuit.h's
+   Section/TextLabel), not part of the main "place a circuit element" tool
+   group, even though they share the same Tool/active_tool/set_active_tool
+   machinery as everything else for simplicity. */
 typedef enum {
     TOOL_SELECT,
     TOOL_WIRE,
@@ -17,6 +24,8 @@ typedef enum {
     TOOL_INPUT,
     TOOL_OUTPUT,
     TOOL_PLACE_IC,
+    TOOL_SECTION,     /* drag out a Section-Labeling rectangle - see input_handler.c */
+    TOOL_TEXT_LABEL,  /* click to place a plain Text Label */
     TOOL_COUNT
 } Tool;
 

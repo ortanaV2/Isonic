@@ -671,3 +671,96 @@ int circuit_footprint_overlaps(const Circuit *circuit, int x, int y, int w, int 
     }
     return 0;
 }
+
+static int find_free_section_slot(Circuit *circuit) {
+    for (int i = 0; i < MAX_SECTIONS; i++) {
+        if (!circuit->sections[i].in_use) return i;
+    }
+    return -1;
+}
+
+/* Shared by circuit_add_section/circuit_set_section_rect - sorts the two
+   corners into (x0,y0)-(x1,y1) order regardless of which diagonal the
+   caller dragged, then clamps to SECTION_MIN_SIZE so it can never collapse
+   to a sliver. */
+static void normalize_section_rect(int x0, int y0, int x1, int y1, int *out_x0, int *out_y0, int *out_x1, int *out_y1) {
+    int lo_x = x0 < x1 ? x0 : x1, hi_x = x0 > x1 ? x0 : x1;
+    int lo_y = y0 < y1 ? y0 : y1, hi_y = y0 > y1 ? y0 : y1;
+    if (hi_x - lo_x < SECTION_MIN_SIZE) hi_x = lo_x + SECTION_MIN_SIZE;
+    if (hi_y - lo_y < SECTION_MIN_SIZE) hi_y = lo_y + SECTION_MIN_SIZE;
+    *out_x0 = lo_x; *out_y0 = lo_y; *out_x1 = hi_x; *out_y1 = hi_y;
+}
+
+int circuit_add_section(Circuit *circuit, int x0, int y0, int x1, int y1, const char *label) {
+    int idx = find_free_section_slot(circuit);
+    if (idx < 0) return -1;
+    Section *s = &circuit->sections[idx];
+    memset(s, 0, sizeof(Section));
+    s->in_use = 1;
+    normalize_section_rect(x0, y0, x1, y1, &s->x0, &s->y0, &s->x1, &s->y1);
+    snprintf(s->label, sizeof(s->label), "%s", label);
+    if (idx + 1 > circuit->section_high_water) circuit->section_high_water = idx + 1;
+    return idx;
+}
+
+void circuit_remove_section(Circuit *circuit, int id) {
+    if (id < 0 || id >= MAX_SECTIONS) return;
+    circuit->sections[id].in_use = 0;
+}
+
+void circuit_set_section_rect(Circuit *circuit, int id, int x0, int y0, int x1, int y1) {
+    if (id < 0 || id >= MAX_SECTIONS || !circuit->sections[id].in_use) return;
+    Section *s = &circuit->sections[id];
+    normalize_section_rect(x0, y0, x1, y1, &s->x0, &s->y0, &s->x1, &s->y1);
+}
+
+int circuit_find_section_at(const Circuit *circuit, float fx, float fy, float tolerance) {
+    for (int i = circuit->section_high_water - 1; i >= 0; i--) {
+        const Section *s = &circuit->sections[i];
+        if (!s->in_use) continue;
+        /* distance to the nearest of the 4 border segments - a corner is
+           just where two of them meet, so this alone already covers "on the
+           outline or at a corner point" without a separate corner check.
+           Deliberately NOT a plain rectangle-contains-point test: a section
+           is a background annotation, and its filled interior shouldn't
+           itself be a click target - only clicking exactly on its frame
+           should pick it up, so components/wires drawn inside one (and the
+           empty space around them) stay fully click-through to whatever's
+           actually there. */
+        float d_top = dist_point_to_segment(fx, fy, (float)s->x0, (float)s->y0, (float)s->x1, (float)s->y0);
+        float d_right = dist_point_to_segment(fx, fy, (float)s->x1, (float)s->y0, (float)s->x1, (float)s->y1);
+        float d_bottom = dist_point_to_segment(fx, fy, (float)s->x1, (float)s->y1, (float)s->x0, (float)s->y1);
+        float d_left = dist_point_to_segment(fx, fy, (float)s->x0, (float)s->y1, (float)s->x0, (float)s->y0);
+        float best = d_top;
+        if (d_right < best) best = d_right;
+        if (d_bottom < best) best = d_bottom;
+        if (d_left < best) best = d_left;
+        if (best <= tolerance) return i;
+    }
+    return -1;
+}
+
+static int find_free_text_label_slot(Circuit *circuit) {
+    for (int i = 0; i < MAX_TEXT_LABELS; i++) {
+        if (!circuit->text_labels[i].in_use) return i;
+    }
+    return -1;
+}
+
+int circuit_add_text_label(Circuit *circuit, int x, int y, const char *text) {
+    int idx = find_free_text_label_slot(circuit);
+    if (idx < 0) return -1;
+    TextLabel *t = &circuit->text_labels[idx];
+    memset(t, 0, sizeof(TextLabel));
+    t->in_use = 1;
+    t->x = x;
+    t->y = y;
+    snprintf(t->text, sizeof(t->text), "%s", text);
+    if (idx + 1 > circuit->text_label_high_water) circuit->text_label_high_water = idx + 1;
+    return idx;
+}
+
+void circuit_remove_text_label(Circuit *circuit, int id) {
+    if (id < 0 || id >= MAX_TEXT_LABELS) return;
+    circuit->text_labels[id].in_use = 0;
+}

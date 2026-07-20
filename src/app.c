@@ -25,6 +25,8 @@ static void app_reset_transient_state(App *app) {
 
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
+    app->selected_section_id = -1;
+    app->selected_text_label_id = -1;
 
     app->drag_kind = DRAG_NONE;
     app->drag_last_gx = 0;
@@ -34,6 +36,7 @@ static void app_reset_transient_state(App *app) {
     app->drag_attach_via_count = 0;
     app->drag_node_count = 0;
     app->drag_node_via_count = 0;
+    app->drag_section_corner = -1;
 
     app->panning = 0;
 
@@ -43,8 +46,19 @@ static void app_reset_transient_state(App *app) {
     app->marquee_cur_mx = 0;
     app->marquee_cur_my = 0;
 
+    app->section_dragging = 0;
+    app->canvas_edit_kind = CANVAS_EDIT_NONE;
+    app->canvas_edit_id = -1;
+    app->canvas_edit_buf[0] = '\0';
+    app->canvas_edit_len = 0;
+
+    app->clipboard_kind = CLIPBOARD_NONE;
     app->clipboard_ic_def = NULL;
     app->pasting = 0;
+    app->clipboard_section_w = 0;
+    app->clipboard_section_h = 0;
+    app->clipboard_section_label[0] = '\0';
+    app->clipboard_text_label_text[0] = '\0';
 
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
@@ -312,6 +326,26 @@ void app_render(App *app, SDL_Renderer *renderer) {
     SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
     SDL_RenderClear(renderer);
 
+    int hover_mx, hover_my;
+    SDL_GetMouseState(&hover_mx, &hover_my);
+
+    /* While the Settings modal is open, the cursor must have zero effect on
+       anything behind it - not just clicks (already gated in
+       input_handler.c) but hover state too: no taskbar/data-editor/layer-
+       panel/section-lock-icon lighting up, no diagnostic/via tooltip.
+       Feeding every one of those calls an off-screen sentinel position
+       achieves that in one place instead of a separate guard in each - the
+       modal itself still gets the real position at the very end, below.
+       Computed up front (not just before taskbar_render, like before
+       Sections existed) since render_sections below - drawn early,
+       intentionally behind wires/components, see its own call - needs it
+       too. */
+    int outside_hover_mx = hover_mx, outside_hover_my = hover_my;
+    if (app->settings_panel.open) {
+        outside_hover_mx = -1;
+        outside_hover_my = -1;
+    }
+
     /* while dragging out a wire, highlight both what it's anchored to (fixed
        for the whole drag) and whatever the cursor is currently hovering, so
        the start point stays visibly marked the entire time, not just briefly.
@@ -342,10 +376,30 @@ void app_render(App *app, SDL_Renderer *renderer) {
     }
 
     render_grid(renderer, &app->camera, app->window_w, app->window_h);
+
+    /* Sections render early - as a background annotation layer, so wires/
+       components drawn right after stay fully visible/clickable inside one
+       instead of it obscuring anything (see circuit.h's Section comment).
+       editing_section_id/canvas_edit_buf only apply while THIS section's
+       label is being retyped (CANVAS_EDIT_SECTION_LABEL) - anything else
+       (nothing being edited, or a brand new pending one, or a Text Label
+       instead) leaves every committed section showing its own stored
+       label untouched. */
+    int editing_section_id = (app->canvas_edit_kind == CANVAS_EDIT_SECTION_LABEL) ? app->canvas_edit_id : -1;
+    render_sections(renderer, app->font_large, &app->camera, &app->circuit, editing_section_id, app->canvas_edit_buf,
+                     outside_hover_mx, outside_hover_my);
+
     int layer_preview = app->shift_held || app->layer_preview_locked;
     render_circuit(renderer, app->font_large, &app->circuit, &app->camera, &app->diagnostics, layer_preview,
                     snap_component_a, snap_wire_a, snap_component_b, snap_wire_b);
     render_diagnostic_highlights(renderer, &app->camera, &app->circuit, &app->diagnostics);
+
+    /* Text Labels render on top of everything else in the canvas content -
+       unlike a Section's background rectangle, a placed note is meant to
+       stay legible even where a wire happens to cross behind it. */
+    int editing_text_label_id = (app->canvas_edit_kind == CANVAS_EDIT_TEXT_LABEL) ? app->canvas_edit_id : -1;
+    render_text_labels(renderer, app->font_large, &app->camera, &app->circuit, editing_text_label_id, app->canvas_edit_buf,
+                        outside_hover_mx, outside_hover_my);
 
     if (app->wiring) {
         render_wire_preview(renderer, &app->camera, app->wire_from_gx, app->wire_from_gy,
@@ -395,20 +449,18 @@ void app_render(App *app, SDL_Renderer *renderer) {
                                app->marquee_cur_mx, app->marquee_cur_my);
     }
 
-    int hover_mx, hover_my;
-    SDL_GetMouseState(&hover_mx, &hover_my);
-
-    /* While the Settings modal is open, the cursor must have zero effect on
-       anything behind it - not just clicks (already gated in
-       input_handler.c) but hover state too: no taskbar/data-editor/layer-
-       panel button lighting up, no diagnostic/via tooltip. Feeding every
-       one of those calls an off-screen sentinel position achieves that in
-       one place instead of a separate guard in each - the modal itself
-       still gets the real position at the very end, below. */
-    int outside_hover_mx = hover_mx, outside_hover_my = hover_my;
-    if (app->settings_panel.open) {
-        outside_hover_mx = -1;
-        outside_hover_my = -1;
+    if (app->section_dragging) {
+        int gx0, gy0, gx1, gy1;
+        camera_screen_to_grid(&app->camera, app->section_drag_start_mx, app->section_drag_start_my, &gx0, &gy0);
+        camera_screen_to_grid(&app->camera, app->section_drag_cur_mx, app->section_drag_cur_my, &gx1, &gy1);
+        render_section_preview(renderer, app->font_large, &app->camera, gx0, gy0, gx1, gy1, "");
+    }
+    if (app->canvas_edit_kind == CANVAS_EDIT_NEW_SECTION) {
+        render_section_preview(renderer, app->font_large, &app->camera, app->pending_section_x0, app->pending_section_y0,
+                                app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf);
+    } else if (app->canvas_edit_kind == CANVAS_EDIT_NEW_TEXT_LABEL) {
+        render_text_label_preview(renderer, app->font_large, &app->camera, app->pending_text_label_x,
+                                   app->pending_text_label_y, app->canvas_edit_buf);
     }
 
     /* place_ic_name itself is deliberately never cleared just for switching

@@ -6,14 +6,14 @@
 #include "platform_win32.h"
 
 static const char *k_action_labels[KEYBIND_ACTION_COUNT] = {
-    "Wire Tool", "Via Tool", "Select Tool", "Input Tool", "Output Tool", "Copy", "Undo", "Redo", "Rotate",
+    "Wire Tool", "Via Tool", "Select Tool", "Input Tool", "Output Tool", "Copy", "Paste", "Undo", "Redo", "Rotate", "Save",
 };
 
 /* File key for each action, in the same order as KeybindAction - shared by
    settings_load/settings_save so the two stay in lockstep by construction. */
 static const char *k_action_keys[KEYBIND_ACTION_COUNT] = {
     "keybind_wire", "keybind_via", "keybind_select", "keybind_input", "keybind_output",
-    "keybind_copy", "keybind_undo", "keybind_redo", "keybind_rotate",
+    "keybind_copy", "keybind_paste", "keybind_undo", "keybind_redo", "keybind_rotate", "keybind_save",
 };
 
 const char *keybind_action_label(KeybindAction action) {
@@ -25,14 +25,20 @@ void settings_defaults(Settings *settings) {
     settings->autosave_minutes = 0;
     settings->layer_panel_anchor_left = 0;
     settings->keybind[KEYBIND_WIRE] = SDL_SCANCODE_W;
-    settings->keybind[KEYBIND_VIA] = SDL_SCANCODE_V;
+    /* was V - collided with Ctrl+V once Paste got its own keybind below
+       (the plain-key checks never excluded Ctrl, so Ctrl+V would also
+       switch to the Via tool as a side effect - see input_handler.c's
+       Ctrl-guards on every plain tool-switch key, added at the same time). */
+    settings->keybind[KEYBIND_VIA] = SDL_SCANCODE_F;
     settings->keybind[KEYBIND_SELECT] = SDL_SCANCODE_SPACE;
     settings->keybind[KEYBIND_INPUT] = SDL_SCANCODE_Q;
     settings->keybind[KEYBIND_OUTPUT] = SDL_SCANCODE_E;
     settings->keybind[KEYBIND_COPY] = SDL_SCANCODE_C;
+    settings->keybind[KEYBIND_PASTE] = SDL_SCANCODE_V;
     settings->keybind[KEYBIND_UNDO] = SDL_SCANCODE_Z;
     settings->keybind[KEYBIND_REDO] = SDL_SCANCODE_Y;
     settings->keybind[KEYBIND_ROTATE] = SDL_SCANCODE_R;
+    settings->keybind[KEYBIND_SAVE] = SDL_SCANCODE_S;
 }
 
 void settings_load(Settings *settings) {

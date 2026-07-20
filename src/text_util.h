@@ -24,4 +24,14 @@ void text_util_draw_scaled_rotated(SDL_Renderer *renderer, TTF_Font *font, const
 /* Returns the rendered pixel width/height of text, or 0/0 if font is NULL. */
 void text_util_measure(TTF_Font *font, const char *text, int *out_w, int *out_h);
 
+/* Baseline-to-top (ascent) and baseline-to-bottom (descent, negative per
+   SDL_ttf's own convention) font metrics, 0/0 if font is NULL. text_util_
+   measure's height is the full ascent-to-descent line box - most ordinary
+   text (no descenders like g/y/p/q/j) only actually draws ink in the
+   ascent portion, so centering on the full box (as if descent space held
+   visible content too) reads as sitting a bit low. Callers that need the
+   text's actual visual center - not just its bounding box's geometric one -
+   use this to correct for that gap (see render.c's text_label_vcenter_offset). */
+void text_util_font_metrics(TTF_Font *font, int *out_ascent, int *out_descent);
+
 #endif
