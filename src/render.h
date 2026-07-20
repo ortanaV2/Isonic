@@ -34,6 +34,20 @@ void render_wire_preview(SDL_Renderer *renderer, const Camera *cam, int fx, int 
 /* Ghost footprint shown while a placement tool is active, following the cursor. */
 void render_placement_preview(SDL_Renderer *renderer, const Camera *cam, int gx, int gy, int w, int h, int valid);
 
+/* Near-full-fidelity ghost of an IC about to be placed at (grid_x, grid_y)
+   with the given rotation - same body/notch/pin-stub rendering render_circuit
+   itself uses for an already-placed IC (render_ic_body), just without
+   individual pin name labels (a placement ghost falls back to the same big
+   centered part name a real IC shows once zoomed out too far for per-pin
+   labels, regardless of zoom - see render_ic_body's show_pin_labels).
+   Doesn't fill the body interior (no IC does - see render_ic_body's own
+   comment), so layering this over render_placement_preview's translucent
+   green/red wash still shows that validity tint through the outline. Used
+   by both the single-IC infinite-placement loop and the general multi-item
+   paste ghost (see app_pending_place_ic/render_paste_ghost in app.c). */
+void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const IC_Def *def,
+                      int grid_x, int grid_y, int rotation);
+
 /* Ghost preview shown while TOOL_VIA is active and the cursor is snapped to
    an existing wire node (see circuit_find_wire_node_near) - same role as
    render_placement_preview above, but for a single point instead of a
@@ -101,10 +115,17 @@ void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, 
                       int editing_id, const char *editing_text, int hover_x, int hover_y);
 /* A section rectangle that's been dragged out but not committed to the
    circuit yet - still being typed for the very first time (see
-   CANVAS_EDIT_NEW_SECTION in app.h). No lock icon or handles - those only
-   make sense for something that already exists. */
+   CANVAS_EDIT_NEW_SECTION in app.h), OR a copied one following the cursor as
+   part of a paste ghost (see render_paste_ghost in app.c) - ghost picks
+   between the two: 0 draws it exactly as an in-progress "still typing the
+   label" preview always has (SECTION_COLOR rect, LABEL_COLOR text, blinking
+   caret); 1 draws it fully in SELECTION_COLOR instead (rect and text both,
+   no caret - nothing's actually being typed), matching the highlighted look
+   every other paste-ghost element (wires, ICs, text labels) uses. No lock
+   icon or handles either way - those only make sense for something that
+   already exists. */
 void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam,
-                             int x0, int y0, int x1, int y1, const char *editing_text);
+                             int x0, int y0, int x1, int y1, const char *editing_text, int ghost);
 /* Screen-space bounds of a section's label text and its lock icon (in that
    left-to-right order, both sitting just above the rectangle's top-right
    corner) - shared by rendering and input_handler.c's click hit-testing,
@@ -126,9 +147,11 @@ int section_lock_icon_visible(TTF_Font *font, const Camera *cam, const Section *
    editing_id/editing_text work identically to render_sections'. */
 void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
                          int editing_id, const char *editing_text, int hover_x, int hover_y);
-/* A text label placed but not committed yet - see CANVAS_EDIT_NEW_TEXT_LABEL. */
+/* A text label placed but not committed yet - see CANVAS_EDIT_NEW_TEXT_LABEL
+   - or a copied one following the cursor as part of a paste ghost, same
+   ghost param meaning as render_section_preview's own above. */
 void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam,
-                                int x, int y, const char *editing_text);
+                                int x, int y, const char *editing_text, int ghost);
 /* Screen-space bounds of a text label's rendered text - shared with
    input_handler.c's click hit-testing, same role as section_label_bounds. */
 int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL_Rect *out);

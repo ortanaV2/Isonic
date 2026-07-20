@@ -598,7 +598,8 @@ static float fit_label_scale(TTF_Font *font, const char *text, float scale, floa
    DIP/PCB footprint. Pin dots are NOT drawn here - see
    render_component_pin_dots, called later in a dedicated top layer so a stub
    line can never slice back through a dot. */
-static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const Component *c, int highlighted) {
+static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const Component *c,
+                            int highlighted, int show_pin_labels, int ghost) {
     const IC_Def *def = c->ic_def;
     int body_w_cells, body_h_cells;
     component_get_size(c, &body_w_cells, &body_h_cells); /* already swapped for a 90/270 rotation */
@@ -642,12 +643,16 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
        would otherwise bleed a little past the edge into the body interior */
     for (int pi = 0; pi < c->pin_count; pi++) {
         const Pin *p = &c->pins[pi];
-        SDL_Color col = signal_color(p->value);
+        /* a ghost's pins have no real signal value to show (nothing's been
+           simulated yet - see render_ic_ghost) - solid SELECTION_COLOR
+           throughout instead, same highlighted look every other ghost
+           element (wires, sections, text labels) already uses */
+        SDL_Color col = ghost ? SELECTION_COLOR : signal_color(p->value);
         SDL_SetRenderDrawColor(renderer, col.r, col.g, col.b, 255);
         draw_thick_line(renderer, edge_sx[pi], edge_sy[pi], tip_sx[pi], tip_sy[pi], thickness);
     }
 
-    SDL_Color border = (c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR;
+    SDL_Color border = (ghost || c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR;
     SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
     /* one straight segment per side of the current bounding box, in BodyEdge
        order - whichever one the notch (always the IC's "pin 1" side, base
@@ -669,7 +674,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
         }
     }
 
-    if (font_large != NULL && cell >= PIN_LABEL_MIN_CELL_PX) {
+    if (font_large != NULL && cell >= PIN_LABEL_MIN_CELL_PX && show_pin_labels) {
         /* a label may not grow past the body's own center along whichever
            axis it grows on - leaves a small safety gap so two labels facing
            each other never touch even when both happen to be exactly at
@@ -759,11 +764,27 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
             float name_scale = fit_a < fit_b ? fit_a : fit_b;
             float text_angle = (c->rotation & 1) ? 0.0f : -90.0f;
             if (name_scale > 0.0f) {
+                SDL_Color name_col = ghost ? SELECTION_COLOR : IC_NAME_LABEL_COLOR;
                 text_util_draw_scaled_rotated(renderer, font_large, def->name, sx + w / 2, sy + h / 2,
-                                               IC_NAME_LABEL_COLOR, name_scale, text_angle);
+                                               name_col, name_scale, text_angle);
             }
         }
     }
+}
+
+void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera *cam, const IC_Def *def,
+                      int grid_x, int grid_y, int rotation) {
+    Component ghost = { 0 };
+    component_init_ic(&ghost, grid_x, grid_y, def);
+    ghost.rotation = rotation;
+    /* never showing individual pin labels (just the big centered part name,
+       same as a real placed IC falls back to once zoomed out too far for
+       those to fit - see render_ic_body's own show_pin_labels branch), and
+       ghost=1 forces the border/pin-stubs/name into a solid SELECTION_COLOR
+       throughout - the same highlighted look every other ghost element
+       (wires, sections, text labels) uses, rather than a not-yet-placed
+       component's nonexistent net/signal state. */
+    render_ic_body(renderer, font_large, cam, &ghost, 0, 0, 1);
 }
 
 static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Component *c) {
@@ -1035,8 +1056,8 @@ void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, 
 }
 
 void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x0, int y0, int x1, int y1,
-                             const char *editing_text) {
-    draw_section_rect(renderer, cam, x0, y0, x1, y1, SECTION_COLOR);
+                             const char *editing_text, int ghost) {
+    draw_section_rect(renderer, cam, x0, y0, x1, y1, ghost ? SELECTION_COLOR : SECTION_COLOR);
     if (font == NULL) return;
     float cell = camera_cell_px(cam);
     float scale = label_scale(cell);
@@ -1052,8 +1073,11 @@ void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera
     int label_x = sx1 - stw;
     int extra_lift = (int)lroundf(SECTION_LABEL_EXTRA_LIFT_PX * zoom_factor(cell));
     int label_y = cell_top_sy - cell_vcenter_offset(font, scale, cell) - extra_lift;
-    text_util_draw_scaled(renderer, font, editing_text, label_x, label_y, LABEL_COLOR, scale);
-    draw_canvas_text_cursor(renderer, font, editing_text, label_x, label_y, scale, LABEL_COLOR);
+    SDL_Color text_col = ghost ? SELECTION_COLOR : LABEL_COLOR;
+    text_util_draw_scaled(renderer, font, editing_text, label_x, label_y, text_col, scale);
+    /* a ghost isn't actively being typed into - no blinking caret, unlike
+       the in-progress-drawing preview this function also renders */
+    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, label_x, label_y, scale, text_col);
 }
 
 int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL_Rect *out) {
@@ -1086,15 +1110,18 @@ void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *ca
 }
 
 void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x, int y,
-                                const char *editing_text) {
+                                const char *editing_text, int ghost) {
     if (font == NULL) return;
     float cell = camera_cell_px(cam);
     float scale = label_scale(cell);
     int sx, sy;
     camera_grid_to_screen(cam, x, y, &sx, &sy);
     sy -= cell_vcenter_offset(font, scale, cell);
-    text_util_draw_scaled(renderer, font, editing_text, sx, sy, LABEL_COLOR, scale);
-    draw_canvas_text_cursor(renderer, font, editing_text, sx, sy, scale, LABEL_COLOR);
+    SDL_Color color = ghost ? SELECTION_COLOR : LABEL_COLOR;
+    text_util_draw_scaled(renderer, font, editing_text, sx, sy, color, scale);
+    /* a ghost isn't actively being typed into - no blinking caret, unlike
+       the in-progress-typing preview this function also renders */
+    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, sx, sy, scale, color);
 }
 
 /* Every wire-drawing pass in render_circuit below iterates wires in THIS
@@ -1139,7 +1166,7 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
         const Component *c = &circuit->components[i];
         if (!c->in_use || c->type != COMP_IC) continue;
         int highlighted = (i == highlight_component_a || i == highlight_component_b);
-        render_ic_body(renderer, font_large, cam, c, highlighted);
+        render_ic_body(renderer, font_large, cam, c, highlighted, 1, 0);
     }
 
     /* pass 2: connection dots on top, so no line/stub can slice through one -

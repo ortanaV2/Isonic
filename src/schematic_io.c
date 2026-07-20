@@ -34,12 +34,15 @@ static WireKind parse_wire_kind(const char *s) {
     return WIRE_KIND_NORMAL;
 }
 
-int schematic_save(const Circuit *circuit, const char *path) {
+int schematic_save(const Circuit *circuit, const Camera *camera, const char *path) {
     FILE *f = fopen(path, "w");
     if (f == NULL) return 0;
 
     kv_write_line(f, "ISONIC_SCHEMATIC 1");
     char line[KV_MAX_LINE];
+
+    snprintf(line, sizeof(line), "camera zoom=%.6f pan=%.6f,%.6f", camera->zoom, camera->pan_x, camera->pan_y);
+    kv_write_line(f, line);
 
     /* name=... is always the LAST field on a layer line and takes the rest
        of the line verbatim (see schematic_load) - it's the only free-text
@@ -135,7 +138,7 @@ int schematic_save(const Circuit *circuit, const char *path) {
     return 1;
 }
 
-int schematic_load(Circuit *circuit, const char *path) {
+int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
     FILE *f = fopen(path, "r");
     if (f == NULL) return 0;
 
@@ -154,7 +157,30 @@ int schematic_load(Circuit *circuit, const char *path) {
         char keyword[32];
         if (!kv_next_token(&cursor, keyword, sizeof(keyword))) continue;
 
-        if (strcmp(keyword, "layer") == 0) {
+        if (strcmp(keyword, "camera") == 0) {
+            char tok[64], key[32], val[64];
+            while (kv_next_token(&cursor, tok, sizeof(tok))) {
+                if (!kv_split_kv(tok, key, sizeof(key), val, sizeof(val))) continue;
+                if (strcmp(key, "zoom") == 0) {
+                    /* clamped the same as camera_zoom_at already keeps every
+                       live zoom change within - guards against a corrupted
+                       or hand-edited file setting a degenerate (<=0) zoom,
+                       which would otherwise divide-by-zero/blow up the very
+                       next camera_screen_to_grid call */
+                    float z = (float)atof(val);
+                    if (z < CAMERA_MIN_ZOOM) z = CAMERA_MIN_ZOOM;
+                    if (z > CAMERA_MAX_ZOOM) z = CAMERA_MAX_ZOOM;
+                    camera->zoom = z;
+                } else if (strcmp(key, "pan") == 0) {
+                    float p[2];
+                    if (sscanf(val, "%f,%f", &p[0], &p[1]) == 2) {
+                        camera->pan_x = p[0];
+                        camera->pan_y = p[1];
+                    }
+                }
+            }
+
+        } else if (strcmp(keyword, "layer") == 0) {
             Layer parsed;
             memset(&parsed, 0, sizeof(parsed));
             parsed.in_use = 1;

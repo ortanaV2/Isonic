@@ -12,7 +12,25 @@
 #include "settings.h"
 #include "settings_panel.h"
 
-#define MAX_DRAG_ATTACHMENTS 64
+/* Bounds both the anchor list begin_selection_drag builds (one slot per
+   selected component pin, two per selected wire) AND the attached-item
+   lists snapshot_drag_attachments/begin_wire_node_drag fill from it
+   (drag_attach_wire_id/drag_attach_via_id/drag_node_wire_id/
+   drag_node_via_id) - all sized off this one constant, see app.h below.
+   Was 64, which silently truncated the ANCHOR list (component pins are
+   gathered before wire endpoints in begin_selection_drag, so a selection
+   with enough pins alone - a handful of ICs is plenty - could already fill
+   every slot and leave zero room for any wire endpoint to become an
+   anchor at all). A via has no way to move except by sitting on one of
+   those anchors (see circuit.h's Via - it has no .selected of its own,
+   unlike a component/wire/section/text label, which move directly instead
+   of relying on this list) - so a selection large enough to hit that cap
+   left every via in it silently stranded while everything else moved,
+   easy to trigger by pasting then dragging a whole multi-component
+   circuit (see input_handler.c's commit_paste) even though nothing was
+   wrong with the paste itself. Bumped well past any realistic circuit's
+   scale - the memory cost of six more int arrays this size is trivial. */
+#define MAX_DRAG_ATTACHMENTS 1024
 /* Plain constant rather than pulling <windows.h>'s MAX_PATH into this
    shared header - only platform_win32.c ever needs the real Windows
    definition, everything else just needs "big enough for a path". */
@@ -55,9 +73,57 @@ typedef enum {
    the two (see circuit.h). */
 #define CANVAS_EDIT_BUF_LEN (TEXT_LABEL_MAX_LEN + 1)
 
-/* Which of App's clipboard_* groups Ctrl+C last populated - see the
-   clipboard_kind field's own comment below. */
-typedef enum { CLIPBOARD_NONE, CLIPBOARD_IC, CLIPBOARD_SECTION, CLIPBOARD_TEXT_LABEL } ClipboardKind;
+/* Ctrl+C's clipboard: an arbitrary mix of components (ICs)/wires/sections/
+   text labels/vias, each stored as a (dx,dy) offset from the copied
+   selection's own bounding-box min corner - see copy_selection in
+   input_handler.c. Pasting (see App.pasting below) just means adding
+   whatever grid point the ghost/click is at to every stored offset -
+   render_paste_ghost in app.c and commit_paste in input_handler.c are the
+   only two places that ever need to do that math.
+
+   A via is never independently selectable (circuit.h's Via has no
+   .selected field) and never copied standalone - copy_selection only ever
+   includes one that sits exactly on an endpoint of some OTHER, already-
+   copied wire, same "moves along with what's actually being manipulated"
+   rule drag_attach_via_id elsewhere already follows for dragging. Both a
+   copied wire's and a copied via's layer_slot(s) are preserved as-is from
+   the original (not remapped to whatever layer happens to be active at
+   paste time) - falling back to the active layer (wire) or being dropped
+   entirely (via, if either side's layer no longer exists) only in the rare
+   case that layer was since removed - see commit_paste. */
+#define CLIPBOARD_MAX_COMPONENTS 64
+#define CLIPBOARD_MAX_WIRES 128
+#define CLIPBOARD_MAX_VIAS CLIPBOARD_MAX_WIRES
+#define CLIPBOARD_MAX_SECTIONS MAX_SECTIONS
+#define CLIPBOARD_MAX_TEXT_LABELS MAX_TEXT_LABELS
+
+typedef struct {
+    const IC_Def *ic_def;
+    int dx, dy;
+    int rotation;
+} ClipboardComponent;
+
+typedef struct {
+    int from_dx, from_dy, to_dx, to_dy;
+    WireKind kind;
+    int input_value; /* only meaningful for WIRE_KIND_INPUT, see Wire.input_value */
+    int layer_slot;
+} ClipboardWire;
+
+typedef struct {
+    int dx, dy;
+    int layer_slot_a, layer_slot_b;
+} ClipboardVia;
+
+typedef struct {
+    int dx0, dy0, dx1, dy1;
+    char label[SECTION_LABEL_MAX_LEN + 1];
+} ClipboardSection;
+
+typedef struct {
+    int dx, dy;
+    char text[TEXT_LABEL_MAX_LEN + 1];
+} ClipboardTextLabel;
 
 typedef struct {
     Circuit circuit;
@@ -171,23 +237,30 @@ typedef struct {
     int pending_section_x0, pending_section_y0, pending_section_x1, pending_section_y1;
     int pending_text_label_x, pending_text_label_y;
 
-    /* Ctrl+C copy: copies whatever's under the cursor (or, failing that, the
-       current selection, only if it's exactly one item) and remembers it
-       for Ctrl+V. A copied Component still immediately starts its existing
-       click-to-place preview too (see app_pending_place_ic) - clipboard_ic_def
-       is left set after pasting ends (harmless - it just points at static
-       IC_Def data owned by the registry); pasting is what actually gates the
-       preview/placement behavior. A copied Section/Text Label has no
-       equivalent "click to place" ghost - Ctrl+V instead drops a copy
-       immediately at wherever the cursor is AT THAT MOMENT (see
-       paste_clipboard in input_handler.c). clipboard_kind is which of the
-       three clipboard_* groups below is actually populated. */
-    ClipboardKind clipboard_kind;
-    const IC_Def *clipboard_ic_def;
+    /* Ctrl+C copy: snapshots the current selection (or, if nothing's
+       selected, whatever single thing is directly under the cursor) into
+       the clipboard_* arrays above - see copy_selection in input_handler.c.
+       `pasting` is true while a copied selection is following the cursor as
+       a ghost, waiting to be committed - Ctrl+C and Ctrl+V both just (re-)
+       arm it the same way. A lone copied IC (clipboard_is_single_ic) keeps
+       behaving exactly like a Components-menu pick always has: every click
+       places another copy, looping until Escape/a tool switch cancels it
+       (see app_pending_place_ic, and handle_left_click's place_def branch).
+       Anything else - a lone wire, a lone Section/Text Label, or more than
+       one item of any kind/mix - is a one-shot paste instead: a single
+       click commits the whole thing at once and ends `pasting` immediately,
+       leaving the just-placed copy selected (see commit_paste). */
+    int clipboard_component_count;
+    ClipboardComponent clipboard_components[CLIPBOARD_MAX_COMPONENTS];
+    int clipboard_wire_count;
+    ClipboardWire clipboard_wires[CLIPBOARD_MAX_WIRES];
+    int clipboard_via_count;
+    ClipboardVia clipboard_vias[CLIPBOARD_MAX_VIAS];
+    int clipboard_section_count;
+    ClipboardSection clipboard_sections[CLIPBOARD_MAX_SECTIONS];
+    int clipboard_text_label_count;
+    ClipboardTextLabel clipboard_text_labels[CLIPBOARD_MAX_TEXT_LABELS];
     int pasting;
-    int clipboard_section_w, clipboard_section_h; /* size only - a paste's position always comes from the cursor at paste time */
-    char clipboard_section_label[SECTION_LABEL_MAX_LEN + 1];
-    char clipboard_text_label_text[TEXT_LABEL_MAX_LEN + 1];
 
     /* Rotation (0-3 quarter turns, see Component.rotation) the NEXT IC
        placed will get - applies to both an IC chosen from the Components
@@ -261,10 +334,19 @@ void app_render(App *app, SDL_Renderer *renderer);
 
 /* The IC that would be placed by a click right now - either the one chosen
    from the taskbar's Components dropdown (TOOL_PLACE_IC, see place_ic_name
-   above) or an in-progress Ctrl+C paste (see pasting above) - or NULL if
-   neither applies. Centralizes which source wins so preview/footprint/
-   placement code never needs to care which one it is. */
+   above) or an in-progress Ctrl+C/Ctrl+V paste of a single copied IC and
+   nothing else (see clipboard_is_single_ic below) - or NULL if neither
+   applies. Centralizes which source wins so the existing single-item
+   preview/footprint/infinite-placement-loop code (handle_left_click's
+   place_def branch, app_render's pending_ic ghost) never needs to care which
+   one it is, and keeps behaving exactly as it always has for that one case. */
 const IC_Def *app_pending_place_ic(const App *app);
+
+/* True if the clipboard holds exactly one item total and it's a component -
+   see App.pasting's own comment above for what this distinction is for. */
+int clipboard_is_single_ic(const App *app);
+/* True if nothing's been copied at all (Ctrl+V has nothing to re-arm). */
+int clipboard_is_empty(const App *app);
 
 /* WIRE_HIT_TOLERANCE_PX converted to grid units at the current zoom - the
    tolerance every wire/pin proximity hit-test in input_handler.c and app.c uses. */

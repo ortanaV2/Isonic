@@ -214,7 +214,12 @@ static void handle_escape(App *app) {
         app->settings_panel.open = 0;
         return;
     }
-    if (app_pending_place_ic(app) != NULL) {
+    /* covers a Components-menu IC pick, a lone-copied-IC placement loop, AND
+       any other in-progress general paste (app_pending_place_ic only ever
+       returns non-NULL for the first two - see its own comment - so
+       app->pasting is checked directly too, or Escape would fail to cancel
+       a multi-item/non-IC paste ghost). */
+    if (app_pending_place_ic(app) != NULL || app->pasting) {
         app->pasting = 0;
         if (app->active_tool == TOOL_PLACE_IC) app->active_tool = TOOL_SELECT;
         app->place_ic_name = NULL;
@@ -935,131 +940,270 @@ static int find_text_label_at(App *app, int mx, int my) {
     return -1;
 }
 
-/* Ctrl+C - copies whatever's directly under the cursor right now, even if
-   nothing is selected (hovering alone is enough): a Component, a Section
-   (its outline/corners, same border-only hit-test click uses - see
-   circuit_find_section_at), or a Text Label, checked in that priority
-   order. Only if the cursor isn't over any of the three does it fall back
-   to the current selection, and only if that selection is exactly one item
-   total across all three kinds - "eine markierte Komponente" is singular
-   for a reason: which one would an ambiguous multi-selection copy? Wires
-   aren't copyable this way. */
-static void copy_selection(App *app) {
-    const Component *found_component = NULL;
-    int found_section_id = -1;
-    int found_text_label_id = -1;
-
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
-    if (my >= TASKBAR_HEIGHT) {
-        int box_gx, box_gy;
-        camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
-        int comp_id = circuit_find_component_at(&app->circuit, box_gx, box_gy);
-        if (comp_id >= 0) found_component = &app->circuit.components[comp_id];
-
-        if (found_component == NULL) {
-            float fx, fy;
-            camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
-            int sec_id = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
-            if (sec_id >= 0) found_section_id = sec_id;
-        }
-        if (found_component == NULL && found_section_id < 0) {
-            found_text_label_id = find_text_label_at(app, mx, my);
-        }
-    }
-
-    if (found_component == NULL && found_section_id < 0 && found_text_label_id < 0) {
-        int comp_count = 0, sec_count = 0, text_count = 0;
-        int comp_candidate = -1, sec_candidate = -1, text_candidate = -1;
-        for (int i = 0; i < app->circuit.component_high_water; i++) {
-            if (app->circuit.components[i].in_use && app->circuit.components[i].selected) {
-                comp_count++;
-                comp_candidate = i;
-            }
-        }
-        for (int i = 0; i < app->circuit.section_high_water; i++) {
-            if (app->circuit.sections[i].in_use && app->circuit.sections[i].selected) {
-                sec_count++;
-                sec_candidate = i;
-            }
-        }
-        for (int i = 0; i < app->circuit.text_label_high_water; i++) {
-            if (app->circuit.text_labels[i].in_use && app->circuit.text_labels[i].selected) {
-                text_count++;
-                text_candidate = i;
-            }
-        }
-        if (comp_count + sec_count + text_count == 1) {
-            if (comp_count == 1) found_component = &app->circuit.components[comp_candidate];
-            else if (sec_count == 1) found_section_id = sec_candidate;
-            else found_text_label_id = text_candidate;
-        }
-    }
-
-    if (found_component != NULL) {
-        /* a Component still immediately starts its existing click-to-place
-           preview - the only one of the three with such a ghost, see
-           app_pending_place_ic. */
-        cancel_transient_actions(app);
-        app->clipboard_kind = CLIPBOARD_IC;
-        app->clipboard_ic_def = found_component->ic_def;
-        app->pasting = 1;
-        app->place_rotation = 0;
-    } else if (found_section_id >= 0) {
-        const Section *s = &app->circuit.sections[found_section_id];
-        cancel_transient_actions(app);
-        app->clipboard_kind = CLIPBOARD_SECTION;
-        app->clipboard_section_w = s->x1 - s->x0;
-        app->clipboard_section_h = s->y1 - s->y0;
-        snprintf(app->clipboard_section_label, sizeof(app->clipboard_section_label), "%s", s->label);
-    } else if (found_text_label_id >= 0) {
-        const TextLabel *t = &app->circuit.text_labels[found_text_label_id];
-        cancel_transient_actions(app);
-        app->clipboard_kind = CLIPBOARD_TEXT_LABEL;
-        snprintf(app->clipboard_text_label_text, sizeof(app->clipboard_text_label_text), "%s", t->text);
-    }
+/* True if layer_slot still refers to a real, in-use layer - a copied wire/
+   via's stored layer_slot(s) are pasted back as-is (see ClipboardWire/
+   ClipboardVia in app.h), but the source layer could in principle have been
+   removed between copy and paste; this is what commit_paste falls back on
+   in that rare case. */
+static int layer_slot_valid(const Circuit *circuit, int layer_slot) {
+    return layer_slot >= 0 && layer_slot < MAX_LAYERS && circuit->layers[layer_slot].in_use;
 }
 
-/* Ctrl+V. A copied Component re-arms the same click-to-place preview
-   copy_selection already started (a no-op if nothing's been copied this
-   session, or the placement's tool got switched away from) - lets you place
-   another one after the first's already been dropped, without re-copying.
-   A copied Section/Text Label has no such ghost to re-arm - there's nothing
-   else Ctrl+V could sensibly do for those except drop a fresh copy right
-   where the cursor is AT THIS MOMENT, so that's what it does, immediately,
-   no click required (a locked source Section's lock state is deliberately
-   NOT copied - a pasted copy always starts unlocked, since locking is a
-   deliberate protective action the user can reapply if they want it again). */
+/* Grows a running (min_x, min_y) bounding corner to also cover (px, py) -
+   *have_bounds starts false and is set true on the first call, so the very
+   first point always "wins" instead of being compared against an arbitrary
+   sentinel. Shared by copy_selection's bounding-box pass below across every
+   clipboard item type. */
+static void grow_bounds(int px, int py, int *min_x, int *min_y, int *have_bounds) {
+    if (!*have_bounds || px < *min_x) *min_x = px;
+    if (!*have_bounds || py < *min_y) *min_y = py;
+    *have_bounds = 1;
+}
+
+/* Ctrl+C - snapshots the current selection (any mix of components/wires/
+   sections/text labels, but never a via - see circuit.h's Via, which has no
+   .selected field and so can't be part of a selection to begin with) into
+   the clipboard_* arrays, each item stored as a (dx,dy) offset from the
+   copied selection's own bounding-box min corner - see the ClipboardXxx
+   structs in app.h. If nothing is currently selected, falls back to
+   whatever single thing is directly under the cursor (a Component, a Wire,
+   a Section's outline/corners - same border-only hit-test click uses, see
+   circuit_find_section_at, and excluding a locked one same as every other
+   hit-test in Select mode does - or a Text Label, checked in that priority
+   order) - the same "hover and copy, no need to click first" convenience
+   the old single-item copy always had, now also covering wires. Arms
+   `pasting` afterward so the ghost/click-to-place immediately starts, same
+   as it always has - see paste_clipboard/commit_paste and
+   clipboard_is_single_ic for what happens depending on what got copied. */
+static void copy_selection(App *app) {
+    int have_selection = selection_count(app) > 0;
+    int hover_comp = -1, hover_wire = -1, hover_section = -1, hover_text = -1;
+
+    if (!have_selection) {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        if (my >= TASKBAR_HEIGHT) {
+            int box_gx, box_gy;
+            camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
+            hover_comp = circuit_find_component_at(&app->circuit, box_gx, box_gy);
+            if (hover_comp < 0) {
+                float fx, fy;
+                camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
+                hover_wire = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+                if (hover_wire < 0) {
+                    hover_section = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+                    if (hover_section >= 0 && app->circuit.sections[hover_section].locked) hover_section = -1;
+                    if (hover_section < 0) hover_text = find_text_label_at(app, mx, my);
+                }
+            }
+        }
+        if (hover_comp < 0 && hover_wire < 0 && hover_section < 0 && hover_text < 0) return;
+    }
+
+    /* gather every matching item, absolute grid coordinates for now - offsets
+       are rebased below, once the whole set's own bounding box is known */
+    app->clipboard_component_count = 0;
+    app->clipboard_wire_count = 0;
+    app->clipboard_via_count = 0;
+    app->clipboard_section_count = 0;
+    app->clipboard_text_label_count = 0;
+
+    for (int i = 0; i < app->circuit.component_high_water && app->clipboard_component_count < CLIPBOARD_MAX_COMPONENTS; i++) {
+        Component *c = &app->circuit.components[i];
+        if (!c->in_use || (have_selection ? !c->selected : i != hover_comp)) continue;
+        ClipboardComponent *cc = &app->clipboard_components[app->clipboard_component_count++];
+        cc->ic_def = c->ic_def;
+        cc->dx = c->grid_x;
+        cc->dy = c->grid_y;
+        cc->rotation = c->rotation;
+    }
+    for (int i = 0; i < app->circuit.wire_high_water && app->clipboard_wire_count < CLIPBOARD_MAX_WIRES; i++) {
+        Wire *w = &app->circuit.wires[i];
+        if (!w->in_use || (have_selection ? !w->selected : i != hover_wire)) continue;
+        ClipboardWire *cw = &app->clipboard_wires[app->clipboard_wire_count++];
+        cw->from_dx = w->from_x;
+        cw->from_dy = w->from_y;
+        cw->to_dx = w->to_x;
+        cw->to_dy = w->to_y;
+        cw->kind = w->kind;
+        cw->input_value = w->input_value;
+        cw->layer_slot = w->layer_slot;
+    }
+    /* a via is never independently selected/hovered (see ClipboardVia's own
+       comment in app.h) - it's only ever pulled in as a side effect of a
+       wire that WAS just gathered above ending exactly on it, checked
+       against the wire coords just stored (still absolute at this point,
+       same as the via's own x,y) rather than re-scanning the circuit's
+       selection state a second time. Each via is considered at most once
+       even if several copied wires converge on it (e.g. a 3+-way junction). */
+    for (int vi = 0; vi < app->circuit.via_high_water && app->clipboard_via_count < CLIPBOARD_MAX_VIAS; vi++) {
+        Via *v = &app->circuit.vias[vi];
+        if (!v->in_use) continue;
+        int attached = 0;
+        for (int wi = 0; wi < app->clipboard_wire_count; wi++) {
+            const ClipboardWire *cw = &app->clipboard_wires[wi];
+            if ((cw->from_dx == v->x && cw->from_dy == v->y) || (cw->to_dx == v->x && cw->to_dy == v->y)) {
+                attached = 1;
+                break;
+            }
+        }
+        if (!attached) continue;
+        ClipboardVia *cv = &app->clipboard_vias[app->clipboard_via_count++];
+        cv->dx = v->x;
+        cv->dy = v->y;
+        cv->layer_slot_a = v->layer_slot_a;
+        cv->layer_slot_b = v->layer_slot_b;
+    }
+    for (int i = 0; i < app->circuit.section_high_water && app->clipboard_section_count < CLIPBOARD_MAX_SECTIONS; i++) {
+        Section *s = &app->circuit.sections[i];
+        if (!s->in_use || (have_selection ? !s->selected : i != hover_section)) continue;
+        ClipboardSection *cs = &app->clipboard_sections[app->clipboard_section_count++];
+        cs->dx0 = s->x0;
+        cs->dy0 = s->y0;
+        cs->dx1 = s->x1;
+        cs->dy1 = s->y1;
+        /* a locked source's lock state is deliberately NOT copied - a
+           pasted copy always starts unlocked, since locking is a deliberate
+           protective action the user can reapply if they want it again */
+        snprintf(cs->label, sizeof(cs->label), "%s", s->label);
+    }
+    for (int i = 0; i < app->circuit.text_label_high_water && app->clipboard_text_label_count < CLIPBOARD_MAX_TEXT_LABELS; i++) {
+        TextLabel *t = &app->circuit.text_labels[i];
+        if (!t->in_use || (have_selection ? !t->selected : i != hover_text)) continue;
+        ClipboardTextLabel *ct = &app->clipboard_text_labels[app->clipboard_text_label_count++];
+        ct->dx = t->x;
+        ct->dy = t->y;
+        snprintf(ct->text, sizeof(ct->text), "%s", t->text);
+    }
+
+    if (clipboard_is_empty(app)) return;
+
+    /* rebase every just-gathered absolute coordinate to an offset from the
+       whole set's own bounding-box min corner */
+    int min_x = 0, min_y = 0, have_bounds = 0;
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        grow_bounds(app->clipboard_components[i].dx, app->clipboard_components[i].dy, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        grow_bounds(app->clipboard_wires[i].from_dx, app->clipboard_wires[i].from_dy, &min_x, &min_y, &have_bounds);
+        grow_bounds(app->clipboard_wires[i].to_dx, app->clipboard_wires[i].to_dy, &min_x, &min_y, &have_bounds);
+    }
+    /* redundant with the wire pass above (a copied via always sits exactly
+       on one of a copied wire's endpoints, see the gather pass) but cheap
+       and keeps this pass reading as "every clipboard array", not relying
+       on that invariant to skip one */
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        grow_bounds(app->clipboard_vias[i].dx, app->clipboard_vias[i].dy, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        grow_bounds(app->clipboard_sections[i].dx0, app->clipboard_sections[i].dy0, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        grow_bounds(app->clipboard_text_labels[i].dx, app->clipboard_text_labels[i].dy, &min_x, &min_y, &have_bounds);
+    }
+
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        app->clipboard_components[i].dx -= min_x;
+        app->clipboard_components[i].dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        app->clipboard_wires[i].from_dx -= min_x;
+        app->clipboard_wires[i].from_dy -= min_y;
+        app->clipboard_wires[i].to_dx -= min_x;
+        app->clipboard_wires[i].to_dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        app->clipboard_vias[i].dx -= min_x;
+        app->clipboard_vias[i].dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        app->clipboard_sections[i].dx0 -= min_x;
+        app->clipboard_sections[i].dy0 -= min_y;
+        app->clipboard_sections[i].dx1 -= min_x;
+        app->clipboard_sections[i].dy1 -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        app->clipboard_text_labels[i].dx -= min_x;
+        app->clipboard_text_labels[i].dy -= min_y;
+    }
+
+    cancel_transient_actions(app);
+    app->pasting = 1;
+    app->place_rotation = 0;
+}
+
+/* Ctrl+V - just re-arms `pasting` (a no-op if nothing's been copied this
+   session, see clipboard_is_empty), same as Ctrl+C already does at the end
+   of copy_selection above; lets you place another copy after the first's
+   already been dropped, without re-copying. Committing the copied content
+   into the circuit happens on the next click instead - see
+   handle_left_click's place_def/commit_paste branches below, and
+   clipboard_is_single_ic for why a lone copied IC behaves differently
+   (infinite click-to-place loop) from everything else (one-shot paste). */
 static void paste_clipboard(App *app) {
-    if (app->clipboard_kind == CLIPBOARD_IC) {
-        if (app->clipboard_ic_def == NULL) return;
-        cancel_transient_actions(app);
-        app->pasting = 1;
-        app->place_rotation = 0;
-        return;
-    }
-    if (app->clipboard_kind == CLIPBOARD_NONE) return;
+    if (clipboard_is_empty(app)) return;
+    cancel_transient_actions(app);
+    app->pasting = 1;
+    app->place_rotation = 0;
+}
 
-    int mx, my;
-    SDL_GetMouseState(&mx, &my);
-    if (my < TASKBAR_HEIGHT) return; /* nowhere sensible to drop it under the taskbar strip */
-    int gx, gy;
-    camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
-
-    if (app->clipboard_kind == CLIPBOARD_SECTION) {
-        int id = circuit_add_section(&app->circuit, gx, gy, gx + app->clipboard_section_w, gy + app->clipboard_section_h,
-                                      app->clipboard_section_label);
+/* Commits every item in the clipboard into the circuit at once, anchored at
+   (gx,gy) - each item's stored (dx,dy) offset (see copy_selection) is just
+   added straight to it. Ends `pasting` immediately (one-shot, unlike a lone
+   copied IC's infinite click-to-place loop, see handle_left_click) and
+   leaves every freshly-placed item selected, replacing whatever was
+   selected before, so the user can immediately nudge the whole pasted group
+   if it landed slightly off. Never called for a lone copied IC - see
+   clipboard_is_single_ic. */
+static void commit_paste(App *app, int gx, int gy) {
+    clear_selection(app);
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        const ClipboardComponent *cc = &app->clipboard_components[i];
+        int id = circuit_add_ic(&app->circuit, gx + cc->dx, gy + cc->dy, cc->ic_def);
         if (id >= 0) {
-            select_section(app, id);
-            push_undo(app);
-        }
-    } else if (app->clipboard_kind == CLIPBOARD_TEXT_LABEL) {
-        int id = circuit_add_text_label(&app->circuit, gx, gy, app->clipboard_text_label_text);
-        if (id >= 0) {
-            select_text_label(app, id);
-            push_undo(app);
+            app->circuit.components[id].rotation = cc->rotation;
+            app->circuit.components[id].selected = 1;
         }
     }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        const ClipboardWire *cw = &app->clipboard_wires[i];
+        /* preserves the original's layer rather than always using whatever's
+           active right now - falls back to the active layer only if that
+           original layer is somehow gone by paste time (see
+           layer_slot_valid) */
+        int layer_slot = layer_slot_valid(&app->circuit, cw->layer_slot) ? cw->layer_slot : app->active_layer_slot;
+        int id = circuit_add_wire(&app->circuit, gx + cw->from_dx, gy + cw->from_dy, gx + cw->to_dx, gy + cw->to_dy,
+                                   cw->kind, layer_slot);
+        if (id >= 0) {
+            app->circuit.wires[id].input_value = cw->input_value;
+            app->circuit.wires[id].selected = 1;
+        }
+    }
+    /* a via with either side's layer gone by paste time is just dropped -
+       there's no sensible "active layer" fallback for a via the way a wire
+       has one (which OTHER layer would it even bridge to?), and this is
+       already the rare edge case layer_slot_valid exists for */
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        const ClipboardVia *cv = &app->clipboard_vias[i];
+        if (!layer_slot_valid(&app->circuit, cv->layer_slot_a) || !layer_slot_valid(&app->circuit, cv->layer_slot_b)) continue;
+        circuit_add_via(&app->circuit, gx + cv->dx, gy + cv->dy, cv->layer_slot_a, cv->layer_slot_b);
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        const ClipboardSection *cs = &app->clipboard_sections[i];
+        int id = circuit_add_section(&app->circuit, gx + cs->dx0, gy + cs->dy0, gx + cs->dx1, gy + cs->dy1, cs->label);
+        if (id >= 0) app->circuit.sections[id].selected = 1;
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        const ClipboardTextLabel *ct = &app->clipboard_text_labels[i];
+        int id = circuit_add_text_label(&app->circuit, gx + ct->dx, gy + ct->dy, ct->text);
+        if (id >= 0) app->circuit.text_labels[id].selected = 1;
+    }
+    app->pasting = 0;
+    /* -1 (ambiguous) unless exactly one thing above actually landed - same
+       "point at the sole survivor, else -1" rule Ctrl+click toggling
+       already established, see its own comment */
+    resync_singular_selection_ids(app);
+    push_undo(app);
 }
 
 /* double_click gates starting a Section-label/Text-Label rename - a plain
@@ -1076,10 +1220,12 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
     }
 
     /* covers both an IC chosen from the Components menu (TOOL_PLACE_IC) and
-       an in-progress Ctrl+C paste - app_pending_place_ic resolves which one
-       wins (see its comment in app.h). Either way, stays in the current mode
-       after placing (like Wire/Input/Output do) so several copies can be
-       dropped in a row without reselecting the IC each time. */
+       an in-progress Ctrl+C/Ctrl+V paste of a single copied IC and nothing
+       else - app_pending_place_ic resolves which one wins (see its comment
+       in app.h). Either way, stays in the current mode after placing (like
+       Wire/Input/Output do) so several copies can be dropped in a row
+       without reselecting the IC each time - unchanged from before the
+       general multi-item clipboard below existed. */
     const IC_Def *place_def = app_pending_place_ic(app);
     if (place_def != NULL) {
         int w, h;
@@ -1093,6 +1239,15 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
                 push_undo(app);
             }
         }
+        return;
+    }
+
+    /* any other in-progress paste (a lone copied wire/Section/Text Label, or
+       more than one item of any kind/mix) commits everything at once right
+       here and ends `pasting` immediately - a one-shot placement, unlike the
+       lone-IC loop just above (see clipboard_is_single_ic/commit_paste). */
+    if (app->pasting) {
+        commit_paste(app, gx, gy);
         return;
     }
 
@@ -1426,6 +1581,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 else handle_left_click(app, mx, my, gx, gy, fx, fy, event->button.clicks >= 2,
                                         (SDL_GetModState() & KMOD_CTRL) != 0);
             } else if (event->button.button == SDL_BUTTON_MIDDLE) {
+                /* double middle-click resets the camera to its default
+                   position/zoom (camera_init's own values - the same
+                   "origin" a brand new schematic starts at) - a quick way
+                   back after panning/zooming off into empty space, without
+                   hunting for the circuit by scrolling around. Still starts
+                   a pan below either way, same as a single click always
+                   has - if the second click's press-drag continues into a
+                   real pan, it now just does so from the freshly-reset
+                   view. */
+                if (event->button.clicks >= 2) camera_init(&app->camera);
                 app->panning = 1;
             } else if (event->button.button == SDL_BUTTON_RIGHT) {
                 handle_right_click(app, mx, my, fx, fy);

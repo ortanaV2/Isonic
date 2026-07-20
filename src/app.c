@@ -52,13 +52,12 @@ static void app_reset_transient_state(App *app) {
     app->canvas_edit_buf[0] = '\0';
     app->canvas_edit_len = 0;
 
-    app->clipboard_kind = CLIPBOARD_NONE;
-    app->clipboard_ic_def = NULL;
+    app->clipboard_component_count = 0;
+    app->clipboard_wire_count = 0;
+    app->clipboard_via_count = 0;
+    app->clipboard_section_count = 0;
+    app->clipboard_text_label_count = 0;
     app->pasting = 0;
-    app->clipboard_section_w = 0;
-    app->clipboard_section_h = 0;
-    app->clipboard_section_label[0] = '\0';
-    app->clipboard_text_label_text[0] = '\0';
 
     app->wiring = 0;
     app->wiring_kind = WIRE_KIND_NORMAL;
@@ -144,11 +143,15 @@ void app_new_schematic(App *app) {
 }
 
 void app_load_from_file(App *app, const char *path) {
-    if (!schematic_load(&app->circuit, path)) {
+    /* the default/fallback camera position - schematic_load overwrites it
+       only if the file actually has a camera record (see schematic_io.h),
+       so a file saved before that existed still resets to this default,
+       exactly like before */
+    camera_init(&app->camera);
+    if (!schematic_load(&app->circuit, &app->camera, path)) {
         platform_show_error(app->window, "Could not open that file - it may not be a valid Isonic schematic.");
         return;
     }
-    camera_init(&app->camera);
     app_reset_transient_state(app);
     snprintf(app->current_file_path, sizeof(app->current_file_path), "%s", path);
     app->dirty = 0;
@@ -157,7 +160,7 @@ void app_load_from_file(App *app, const char *path) {
 
 int app_save_current(App *app) {
     if (app->current_file_path[0] == '\0') return app_save_as(app);
-    if (!schematic_save(&app->circuit, app->current_file_path)) {
+    if (!schematic_save(&app->circuit, &app->camera, app->current_file_path)) {
         platform_show_error(app->window, "Could not save the file.");
         return 0;
     }
@@ -169,7 +172,7 @@ int app_save_current(App *app) {
 int app_save_as(App *app) {
     char path[ISONIC_PATH_MAX];
     if (!platform_save_file_dialog(app->window, path, sizeof(path))) return 0;
-    if (!schematic_save(&app->circuit, path)) {
+    if (!schematic_save(&app->circuit, &app->camera, path)) {
         platform_show_error(app->window, "Could not save the file.");
         return 0;
     }
@@ -219,7 +222,7 @@ void app_update(App *app) {
     if (app->settings.autosave_minutes > 0 && app->dirty && app->current_file_path[0] != '\0') {
         Uint32 interval_ms = (Uint32)app->settings.autosave_minutes * 60000u;
         if (SDL_GetTicks() - app->last_autosave_tick >= interval_ms) {
-            if (schematic_save(&app->circuit, app->current_file_path)) {
+            if (schematic_save(&app->circuit, &app->camera, app->current_file_path)) {
                 app->dirty = 0;
                 app_update_window_title(app);
             }
@@ -232,8 +235,20 @@ float app_wire_hit_tolerance(const App *app) {
     return WIRE_HIT_TOLERANCE_PX / camera_cell_px(&app->camera);
 }
 
+int clipboard_is_single_ic(const App *app) {
+    return app->clipboard_component_count == 1 && app->clipboard_wire_count == 0 &&
+           app->clipboard_via_count == 0 && app->clipboard_section_count == 0 &&
+           app->clipboard_text_label_count == 0;
+}
+
+int clipboard_is_empty(const App *app) {
+    return app->clipboard_component_count == 0 && app->clipboard_wire_count == 0 &&
+           app->clipboard_via_count == 0 && app->clipboard_section_count == 0 &&
+           app->clipboard_text_label_count == 0;
+}
+
 const IC_Def *app_pending_place_ic(const App *app) {
-    if (app->pasting && app->clipboard_ic_def != NULL) return app->clipboard_ic_def;
+    if (app->pasting && clipboard_is_single_ic(app)) return app->clipboard_components[0].ic_def;
     if (app->active_tool == TOOL_PLACE_IC && app->place_ic_name != NULL) {
         return ic_registry_get(app->place_ic_name);
     }
@@ -320,6 +335,43 @@ static int find_via_hover_at(App *app, int mx, int my) {
     int gx, gy;
     camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
     return circuit_find_via_at(&app->circuit, gx, gy);
+}
+
+/* Ghost for any in-progress paste EXCEPT a lone copied IC (that case keeps
+   its own existing single-footprint preview - see app_pending_place_ic and
+   the pending_ic block below). Draws every copied item at its prospective
+   final position - (gx,gy) plus that item's own stored offset, see
+   ClipboardComponent/Wire/Section/TextLabel in app.h - reusing the same
+   "preview" drawing calls the rest of the app already uses for a single
+   not-yet-committed item of each kind, rather than the full-fidelity
+   render_circuit path, so a multi-item ghost stays cheap and doesn't need
+   its own copy of a live Circuit to render from. No overlap/validity
+   checking here (unlike the single-IC footprint case) - committing a
+   general paste always succeeds, same as pasting a Section/Text Label
+   always has. */
+static void render_paste_ghost(SDL_Renderer *renderer, App *app, int gx, int gy) {
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        const ClipboardComponent *cc = &app->clipboard_components[i];
+        render_ic_ghost(renderer, app->font_large, &app->camera, cc->ic_def, gx + cc->dx, gy + cc->dy, cc->rotation);
+    }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        const ClipboardWire *cw = &app->clipboard_wires[i];
+        render_wire_preview(renderer, &app->camera, gx + cw->from_dx, gy + cw->from_dy,
+                             gx + cw->to_dx, gy + cw->to_dy);
+    }
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        const ClipboardVia *cv = &app->clipboard_vias[i];
+        render_via_placement_preview(renderer, &app->camera, gx + cv->dx, gy + cv->dy, 1);
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        const ClipboardSection *cs = &app->clipboard_sections[i];
+        render_section_preview(renderer, app->font_large, &app->camera, gx + cs->dx0, gy + cs->dy0,
+                                gx + cs->dx1, gy + cs->dy1, cs->label, 1);
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        const ClipboardTextLabel *ct = &app->clipboard_text_labels[i];
+        render_text_label_preview(renderer, app->font_large, &app->camera, gx + ct->dx, gy + ct->dy, ct->text, 1);
+    }
 }
 
 void app_render(App *app, SDL_Renderer *renderer) {
@@ -422,7 +474,24 @@ void app_render(App *app, SDL_Renderer *renderer) {
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
             if (app->place_rotation & 1) { int t = w; w = h; h = t; }
             int valid = !circuit_footprint_overlaps(&app->circuit, gx, gy, w, h, -1);
+            /* the translucent green/red wash still shows through the
+               accurate body's own unfilled interior, drawn right on top -
+               see render_ic_ghost's own comment */
             render_placement_preview(renderer, &app->camera, gx, gy, w, h, valid);
+            render_ic_ghost(renderer, app->font_large, &app->camera, pending_ic, gx, gy, app->place_rotation);
+        }
+    }
+
+    if (app->pasting && !clipboard_is_single_ic(app)) {
+        int mx, my;
+        SDL_GetMouseState(&mx, &my);
+        /* same suppression the single-IC ghost above uses - see its own
+           comment */
+        if (!taskbar_covers_point(&app->taskbar, mx, my) && !data_editor_covers_point(&app->data_editor, mx, my) &&
+            !settings_panel_covers_point(&app->settings_panel, mx, my) && my >= TASKBAR_HEIGHT) {
+            int gx, gy;
+            camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
+            render_paste_ghost(renderer, app, gx, gy);
         }
     }
 
@@ -453,14 +522,14 @@ void app_render(App *app, SDL_Renderer *renderer) {
         int gx0, gy0, gx1, gy1;
         camera_screen_to_grid(&app->camera, app->section_drag_start_mx, app->section_drag_start_my, &gx0, &gy0);
         camera_screen_to_grid(&app->camera, app->section_drag_cur_mx, app->section_drag_cur_my, &gx1, &gy1);
-        render_section_preview(renderer, app->font_large, &app->camera, gx0, gy0, gx1, gy1, "");
+        render_section_preview(renderer, app->font_large, &app->camera, gx0, gy0, gx1, gy1, "", 0);
     }
     if (app->canvas_edit_kind == CANVAS_EDIT_NEW_SECTION) {
         render_section_preview(renderer, app->font_large, &app->camera, app->pending_section_x0, app->pending_section_y0,
-                                app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf);
+                                app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf, 0);
     } else if (app->canvas_edit_kind == CANVAS_EDIT_NEW_TEXT_LABEL) {
         render_text_label_preview(renderer, app->font_large, &app->camera, app->pending_text_label_x,
-                                   app->pending_text_label_y, app->canvas_edit_buf);
+                                   app->pending_text_label_y, app->canvas_edit_buf, 0);
     }
 
     /* place_ic_name itself is deliberately never cleared just for switching
