@@ -259,6 +259,82 @@ static void draw_edge_with_notch(SDL_Renderer *renderer, float x0, float y0, flo
    for the matching point-rotation math this must stay consistent with. */
 typedef enum { EDGE_LEFT = 0, EDGE_BOTTOM = 1, EDGE_RIGHT = 2, EDGE_TOP = 3 } BodyEdge;
 
+/* Fills the IC body's interior - a (sx,sy)-(sx+w,sy+h) rectangle with a
+   semicircular bite taken out of the middle of notch_edge, same geometry
+   draw_edge_with_notch strokes as the border - with a single translucent
+   color. Only used for the ghost preview (see render_ic_ghost); a real
+   placed IC's body stays outline-only, its established "schematic-symbol
+   style" look. Built as one polygon, fan-triangulated from the body's own
+   center: walk the 4 corners clockwise (TOP -> RIGHT -> BOTTOM -> LEFT
+   edges), and on the notch edge, replace the straight run between its two
+   corners with an arc of points curving in by notch_radius_px instead -
+   the same arc draw_edge_with_notch's own draw_arc_strip sweeps, just
+   walked in the opposite direction here so it starts exactly where the
+   notch-edge's leading corner left off and ends exactly at its trailing
+   corner, keeping the boundary a single closed loop. Fanning from the
+   center is only valid for a boundary that's "star-shaped" around it (every
+   point visible from the center without crossing another edge first) - true
+   here since notch_radius_px is always small relative to the body's fixed
+   width (see its own comment). */
+static void fill_ic_body_notched(SDL_Renderer *renderer, float sx, float sy, float w, float h, int notch_edge,
+                                  float cell, SDL_Color col) {
+    float radius = notch_radius_px(cell);
+    float cx = sx + w * 0.5f, cy = sy + h * 0.5f;
+
+    /* clockwise walk starting top-left; walk_edge[i] is which BodyEdge the
+       segment from corner i to corner (i+1)&3 is, and inward_n[x/y][i] is
+       that edge's own inward-pointing normal (into the body) - same
+       direction convention render_ic_body's own enx/eny arrays use, just
+       indexed by walk position instead of BodyEdge value. */
+    float corner_x[4] = { sx, sx + w, sx + w, sx };
+    float corner_y[4] = { sy, sy, sy + h, sy + h };
+    static const BodyEdge walk_edge[4] = { EDGE_TOP, EDGE_RIGHT, EDGE_BOTTOM, EDGE_LEFT };
+    float inward_nx[4] = { 0.0f, -1.0f, 0.0f, 1.0f };
+    float inward_ny[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
+
+    SDL_FPoint pts[4 + NOTCH_ARC_SEGMENTS + 1];
+    int n = 0;
+    for (int i = 0; i < 4; i++) {
+        /* corner i is always a boundary vertex, notch or not - it's the arc
+           (inserted right after it below, only on the notch edge) that
+           replaces the rest of that edge's straight run, not the corner
+           itself. Skipping this push here used to leave corner i out of the
+           polygon entirely on the notch edge, so the boundary jumped
+           straight from the previous point to the arc's near shoulder -
+           cutting a large diagonal wedge out of the fill instead of just
+           following the notch. */
+        pts[n++] = (SDL_FPoint){ corner_x[i], corner_y[i] };
+        if (walk_edge[i] != notch_edge) continue;
+        float x0 = corner_x[i], y0 = corner_y[i];
+        float x1 = corner_x[(i + 1) & 3], y1 = corner_y[(i + 1) & 3];
+        float mx = (x0 + x1) * 0.5f, my = (y0 + y1) * 0.5f;
+        float angle_center = atan2f(inward_ny[i], inward_nx[i]);
+        /* sweeps from the corner-i-side shoulder to the corner-(i+1)-side
+           shoulder - the reverse of draw_arc_strip's own t=0..1 direction,
+           since that function only strokes the arc (direction-independent)
+           while this one must connect it into the walk at both ends. */
+        float angle_from = angle_center + ISONIC_TAU * 0.25f;
+        float angle_to = angle_center - ISONIC_TAU * 0.25f;
+        for (int a = 0; a <= NOTCH_ARC_SEGMENTS; a++) {
+            float t = (float)a / NOTCH_ARC_SEGMENTS;
+            float angle = angle_from + (angle_to - angle_from) * t;
+            pts[n++] = (SDL_FPoint){ mx + cosf(angle) * radius, my + sinf(angle) * radius };
+        }
+    }
+
+    SDL_Vertex verts[4 + NOTCH_ARC_SEGMENTS + 1 + 1];
+    verts[0] = (SDL_Vertex){ { cx, cy }, col, { 0, 0 } };
+    for (int i = 0; i < n; i++) verts[i + 1] = (SDL_Vertex){ pts[i], col, { 0, 0 } };
+
+    int indices[(4 + NOTCH_ARC_SEGMENTS + 1) * 3];
+    for (int i = 0; i < n; i++) {
+        indices[i * 3 + 0] = 0;
+        indices[i * 3 + 1] = i + 1;
+        indices[i * 3 + 2] = ((i + 1) % n) + 1;
+    }
+    SDL_RenderGeometry(renderer, NULL, verts, n + 1, indices, n * 3);
+}
+
 void render_grid(SDL_Renderer *renderer, const Camera *cam, int window_w, int window_h) {
     /* caller clears the background before invoking this; only grid dots are drawn here */
     float cell = camera_cell_px(cam);
@@ -605,6 +681,21 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     int w = (int)lroundf(body_w_cells * cell);
     int h = (int)lroundf(body_h_cells * cell);
     float thickness = wire_thickness_px(cell);
+    /* the notch (always the IC's "pin 1" side, base EDGE_TOP) rotated the
+       same as everything else - computed once here and reused by both the
+       ghost fill below and the border loop further down. */
+    int notch_edge = (EDGE_TOP + c->rotation) & 3;
+
+    if (ghost) {
+        /* light, translucent fill of the body's interior - a real placed IC
+           stays outline-only (see render_ic_body's own header comment), but
+           a ghost reads better with some fill so it doesn't get lost among
+           the wires/grid behind it, same idea render_via_placement_preview's
+           filled ring already uses for a via ghost. */
+        SDL_Color fill_col = ghost_col;
+        fill_col.a = 70;
+        fill_ic_body_notched(renderer, (float)sx, (float)sy, (float)w, (float)h, notch_edge, cell, fill_col);
+    }
 
     /* pin edge anchors (screen-space) are computed once and reused by both the
        stub pass and the label pass below, instead of recomputing per pin twice.
@@ -649,8 +740,7 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     SDL_Color border = ghost ? ghost_col : ((c->selected || highlighted) ? SELECTION_COLOR : IC_BORDER_COLOR);
     SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, 255);
     /* one straight segment per side of the current bounding box, in BodyEdge
-       order - whichever one the notch (always the IC's "pin 1" side, base
-       EDGE_TOP, rotated the same as everything else) currently lands on gets
+       order - notch_edge (computed up top, alongside the ghost fill) gets
        drawn with draw_edge_with_notch instead of a plain line. */
     float ex0[4] = { (float)sx, (float)sx, (float)(sx + w), (float)sx };
     float ey0[4] = { (float)sy, (float)(sy + h), (float)sy, (float)sy };
@@ -658,7 +748,6 @@ static void render_ic_body(SDL_Renderer *renderer, TTF_Font *font_large, const C
     float ey1[4] = { (float)(sy + h), (float)(sy + h), (float)(sy + h), (float)sy };
     float enx[4] = { 1.0f, 0.0f, -1.0f, 0.0f };
     float eny[4] = { 0.0f, -1.0f, 0.0f, 1.0f };
-    int notch_edge = (EDGE_TOP + c->rotation) & 3;
     for (int e = 0; e < 4; e++) {
         if (e == notch_edge) {
             draw_edge_with_notch(renderer, ex0[e], ey0[e], ex1[e], ey1[e], enx[e], eny[e], cell, thickness);

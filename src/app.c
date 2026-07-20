@@ -515,10 +515,12 @@ void app_render(App *app, SDL_Renderer *renderer) {
     }
 
     if (app->section_dragging) {
-        int gx0, gy0, gx1, gy1;
-        camera_screen_to_grid(&app->camera, app->section_drag_start_mx, app->section_drag_start_my, &gx0, &gy0);
-        camera_screen_to_grid(&app->camera, app->section_drag_cur_mx, app->section_drag_cur_my, &gx1, &gy1);
-        render_section_preview(renderer, app->font_large, &app->camera, gx0, gy0, gx1, gy1, "", 0);
+        /* both corners are already grid coordinates - see app.h's
+           section_drag_start_gx/gy comment on why this used to reconvert
+           stale screen pixels here every frame instead (and would visibly
+           drift if the camera zoomed mid-drag) */
+        render_section_preview(renderer, app->font_large, &app->camera, app->section_drag_start_gx,
+                                app->section_drag_start_gy, app->section_drag_cur_gx, app->section_drag_cur_gy, "", 0);
     }
     if (app->canvas_edit_kind == CANVAS_EDIT_NEW_SECTION) {
         render_section_preview(renderer, app->font_large, &app->camera, app->pending_section_x0, app->pending_section_y0,

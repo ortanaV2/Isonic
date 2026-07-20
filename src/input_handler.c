@@ -800,18 +800,23 @@ static void finish_marquee_select(App *app) {
     update_marquee_selection(app);
 }
 
-/* TOOL_SECTION mouse-up: converts the just-dragged screen-space box (see
-   app.h's section_dragging) into a grid rect and hands it to
-   canvas_edit_kind for its first-time label entry, rather than adding it to
-   the circuit directly - see CANVAS_EDIT_NEW_SECTION and commit_canvas_edit.
+/* TOOL_SECTION mouse-up: turns the just-dragged box into a grid rect and
+   hands it to canvas_edit_kind for its first-time label entry, rather than
+   adding it to the circuit directly - see CANVAS_EDIT_NEW_SECTION and
+   commit_canvas_edit. The start corner (section_drag_start_gx/gy) was
+   already pinned to a grid point back when the drag began - see its own
+   comment in app.h; only the release point (mx, my) still needs converting
+   here, fresh, same "one last catch-up conversion in case the final
+   position never got a motion event of its own" reasoning
+   finish_marquee_select's own re-run of update_marquee_selection relies on.
    Too small a drag (below SECTION_MIN_SIZE either axis - including a plain
    click with no real drag at all) discards it instead of creating a
    degenerate sliver nobody could see or select afterward. */
 static void finish_section_draw(App *app, int mx, int my) {
     app->section_dragging = 0;
-    int gx0, gy0, gx1, gy1;
-    camera_screen_to_grid(&app->camera, app->section_drag_start_mx, app->section_drag_start_my, &gx0, &gy0);
+    int gx1, gy1;
     camera_screen_to_grid(&app->camera, mx, my, &gx1, &gy1);
+    int gx0 = app->section_drag_start_gx, gy0 = app->section_drag_start_gy;
     int lo_x = gx0 < gx1 ? gx0 : gx1, hi_x = gx0 > gx1 ? gx0 : gx1;
     int lo_y = gy0 < gy1 ? gy0 : gy1, hi_y = gy0 > gy1 ? gy0 : gy1;
     if (hi_x - lo_x < SECTION_MIN_SIZE || hi_y - lo_y < SECTION_MIN_SIZE) return;
@@ -1256,15 +1261,16 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         return;
     }
 
-    /* Section-Labeling: drag out a rectangle, same screen-space-until-
-       release tracking the marquee box uses - see finish_section_draw. No
-       hit-test to fall through first, unlike TOOL_SELECT below - this tool
-       only ever means "start drawing a new section", nothing else. */
+    /* Section-Labeling: drag out a rectangle - see finish_section_draw and
+       app.h's section_dragging comment on why both corners are tracked in
+       grid coordinates, not screen pixels. No hit-test to fall through
+       first, unlike TOOL_SELECT below - this tool only ever means "start
+       drawing a new section", nothing else. */
     if (app->active_tool == TOOL_SECTION) {
         clear_selection(app);
         app->section_dragging = 1;
-        app->section_drag_start_mx = app->section_drag_cur_mx = mx;
-        app->section_drag_start_my = app->section_drag_cur_my = my;
+        app->section_drag_start_gx = app->section_drag_cur_gx = gx;
+        app->section_drag_start_gy = app->section_drag_cur_gy = gy;
         return;
     }
 
@@ -1629,8 +1635,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 update_marquee_selection(app);
             }
             if (app->section_dragging) {
-                app->section_drag_cur_mx = event->motion.x;
-                app->section_drag_cur_my = event->motion.y;
+                camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y,
+                                       &app->section_drag_cur_gx, &app->section_drag_cur_gy);
             }
             if (app->drag_kind != DRAG_NONE) {
                 int gx, gy;

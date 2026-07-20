@@ -212,17 +212,26 @@ typedef struct {
     int marquee_start_mx, marquee_start_my;
     int marquee_cur_mx, marquee_cur_my;
 
-    /* TOOL_SECTION drag-to-draw: same screen-space-until-release tracking as
-       the marquee box above, started on a left-button-down while
+    /* TOOL_SECTION drag-to-draw, started on a left-button-down while
        TOOL_SECTION is active anywhere on the canvas (no node/component/wire
        hit-test to fall through first - Section-Labeling always draws,
-       there's nothing else a click could mean in this tool). Released ->
-       converted to a grid rect and handed to canvas_edit_kind
-       (CANVAS_EDIT_NEW_SECTION) rather than added to the circuit directly -
-       see finish_section_draw in input_handler.c. */
+       there's nothing else a click could mean in this tool). Unlike the
+       marquee box above, both corners are converted to grid coordinates
+       immediately (start once at button-down, cur again on every
+       following motion event) instead of staying in screen space until
+       release - a section is a grid object, so its start corner has to stay
+       pinned to the same grid point for the rest of the drag. Tracking it
+       as a screen pixel instead used to mean any zoom mid-drag (which
+       shifts pan_x/pan_y to keep the CURSOR anchored, not that unrelated
+       pixel) silently reinterpreted that same pixel as a different grid
+       point every time it was reconverted, making the rectangle's start
+       corner visibly drift on the grid despite the mouse never having
+       moved. Released -> handed to canvas_edit_kind (CANVAS_EDIT_NEW_SECTION)
+       rather than added to the circuit directly - see finish_section_draw in
+       input_handler.c. */
     int section_dragging;
-    int section_drag_start_mx, section_drag_start_my;
-    int section_drag_cur_mx, section_drag_cur_my;
+    int section_drag_start_gx, section_drag_start_gy;
+    int section_drag_cur_gx, section_drag_cur_gy;
 
     /* Canvas-level text editing shared by Section-Labeling and Text Label -
        see CanvasEditKind above. canvas_edit_id is which circuit->sections[]/
