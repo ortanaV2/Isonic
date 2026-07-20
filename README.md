@@ -13,7 +13,7 @@ directly all make Isonic a schematic-design foundation for PCB development,
 pairing schematic entry with the groundwork for PCB layout and routing in one
 tool.
 
-<img width="1278" height="829" alt="image" src="https://github.com/user-attachments/assets/022658c9-fbef-466e-829c-1f1f9258006a" />
+<img width="1277" height="828" alt="image" src="https://github.com/user-attachments/assets/03351805-abea-45f9-8e37-3f78c176be3c" />
 
 ## Installation
 
