@@ -1,4 +1,6 @@
-# Isonic Developer
+<img width="1200" height="310" alt="Isonic_Banner" src="https://github.com/user-attachments/assets/086de0b7-fbd9-4f60-8ea4-4dc9483403e3" />
+
+# Isonic: Computer Architecture Development Software
 
 Isonic is an application for designing and simulating computer architectures.
 It combines schematic capture with live logic simulation, letting you build
@@ -13,14 +15,7 @@ directly all make Isonic a schematic-design foundation for PCB development,
 pairing schematic entry with the groundwork for PCB layout and routing in one
 tool.
 
-<img width="1277" height="828" alt="image" src="https://github.com/user-attachments/assets/03351805-abea-45f9-8e37-3f78c176be3c" />
-
-## Installation
-
-> No build tools required — just download and run. Windows only for now.
-
-[Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.0.0-preview/isonic-windows-x64-v1.0.0-preview.zip)
-
+## [Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.0.0-preview/isonic-windows-x64-v1.0.0-preview.zip)
 <details>
 <summary><strong>Manual download</strong></summary>
 
@@ -31,6 +26,8 @@ tool.
 5. Run `isonic.exe`
 
 </details>
+
+<img width="1277" height="828" alt="image" src="https://github.com/user-attachments/assets/03351805-abea-45f9-8e37-3f78c176be3c" />
 
 ## Features
 
