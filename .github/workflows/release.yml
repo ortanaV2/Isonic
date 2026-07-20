@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows ────────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-SDL2_ttf
+            zip
+
+      - name: Build
+        run: mingw32-make
+
+      - name: Package
+        run: bash package_windows.sh ${{ github.ref_name }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+
+  # ── Update README download link ─────────────────────────────────────────────
+  update-readme:
+    needs: [build-windows]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update download link
+        run: |
+          TAG="${{ github.ref_name }}"
+          sed -i "s|/releases/download/v[^/]*/isonic-windows-x64-v[^)]*\.zip|/releases/download/${TAG}/isonic-windows-x64-${TAG}.zip|g" README.md
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "docs: update download link to ${{ github.ref_name }}"
+          git push origin main
