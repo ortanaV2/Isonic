@@ -198,7 +198,7 @@ int main(int argc, char **argv) {
     ic_tlc555_register();
 
     App app;
-    app_init(&app, WINDOW_W, WINDOW_H);
+    app_init(&app, WINDOW_W, WINDOW_H, window);
 
     SDL_Texture *scene_target = create_scene_target(renderer, app.window_w, app.window_h);
     int scene_w = app.window_w, scene_h = app.window_h;

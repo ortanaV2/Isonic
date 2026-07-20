@@ -56,15 +56,23 @@ typedef enum {
 
 void layer_panel_init(LayerPanel *lp);
 
-/* window_w/panel_right_margin position the panel's right edge -
-   panel_right_margin is 0 normally, or the Manage Data panel's own width
-   when that's open, so the two sit side by side instead of overlapping
-   (see app.c). active_layer_slot is highlighted so it's clear which layer
-   new wires land on. The panel's width grows to fit its longest current
-   layer name (and whatever's being typed right now) rather than clipping
-   or squeezing text under the buttons - see layer_panel.c. */
+/* anchor_left picks which corner the panel docks to (Settings' Layer-Panel
+   Corner option, see settings.h): the default (false) docks top-right below
+   the taskbar, same as always - window_w/panel_right_margin position its
+   right edge there, where panel_right_margin is 0 normally, or the Manage
+   Data panel's own width when that's open, so the two sit side by side
+   instead of overlapping (see app.c). true instead docks it to the left
+   edge, vertically CENTERED on the window (window_h) rather than tucked
+   under the taskbar - clamped so it can never ride up over the taskbar
+   strip on a short window; panel_right_margin is simply ignored in this
+   case, since nothing else docks on the left edge today. active_layer_slot
+   is highlighted so it's clear which layer new wires land on. The panel's
+   width grows to fit its longest current layer name (and whatever's being
+   typed right now) rather than clipping or squeezing text under the
+   buttons - see layer_panel.c. */
 void layer_panel_render(SDL_Renderer *renderer, TTF_Font *font, LayerPanel *lp, const Circuit *circuit,
-                         int active_layer_slot, int window_w, int panel_right_margin, int hover_x, int hover_y);
+                         int active_layer_slot, int window_w, int window_h, int panel_right_margin, int anchor_left,
+                         int hover_x, int hover_y);
 
 /* True if (x,y) falls on the panel or either open popup - used to swallow
    clicks there instead of letting them act on the circuit underneath, same

@@ -166,8 +166,14 @@ int layer_panel_is_editing(const LayerPanel *lp) {
     return lp->editing_pos != -1;
 }
 
+/* Small fixed left margin used when anchor_left is set - mirrors the visual
+   weight of the right-anchored case's own edge-to-panel gap without needing
+   any sliding-margin logic (nothing else docks on the left today). */
+#define LEFT_ANCHOR_MARGIN 8
+
 void layer_panel_render(SDL_Renderer *renderer, TTF_Font *font, LayerPanel *lp, const Circuit *circuit,
-                         int active_layer_slot, int window_w, int panel_right_margin, int hover_x, int hover_y) {
+                         int active_layer_slot, int window_w, int window_h, int panel_right_margin, int anchor_left,
+                         int hover_x, int hover_y) {
     int n = circuit->layer_order_count;
 
     /* the name column grows to fit whatever's currently the widest text it
@@ -194,7 +200,16 @@ void layer_panel_render(SDL_Renderer *renderer, TTF_Font *font, LayerPanel *lp, 
 
     int panel_w = ROW_PAD_X * 2 + SWATCH_SIZE + COL_GAP + NUM_W + COL_GAP + name_w + NAME_GAP + BUTTON_CLUSTER_W;
     int panel_h = HEADER_H + HEADER_ROW_GAP + (n + 1) * ROW_H;
-    lp->panel_rect = (SDL_Rect){ window_w - panel_w - panel_right_margin, TASKBAR_HEIGHT, panel_w, panel_h };
+    int panel_x, panel_y;
+    if (anchor_left) {
+        panel_x = LEFT_ANCHOR_MARGIN;
+        panel_y = (window_h - panel_h) / 2;
+        if (panel_y < TASKBAR_HEIGHT) panel_y = TASKBAR_HEIGHT; /* never ride up over the taskbar strip */
+    } else {
+        panel_x = window_w - panel_w - panel_right_margin;
+        panel_y = TASKBAR_HEIGHT;
+    }
+    lp->panel_rect = (SDL_Rect){ panel_x, panel_y, panel_w, panel_h };
 
     SDL_SetRenderDrawColor(renderer, BG_COLOR.r, BG_COLOR.g, BG_COLOR.b, BG_COLOR.a);
     SDL_RenderFillRect(renderer, &lp->panel_rect);

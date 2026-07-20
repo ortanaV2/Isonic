@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <string.h>
 #include "app.h"
 #include "render.h"
 #include "sim.h"
@@ -5,23 +7,20 @@
 #include "ic_registry.h"
 #include "diagnostics.h"
 #include "undo.h"
+#include "schematic_io.h"
+#include "platform_win32.h"
 
-void app_init(App *app, int window_w, int window_h) {
-    circuit_init(&app->circuit);
-    camera_init(&app->camera);
-    taskbar_init(&app->taskbar);
-    taskbar_layout(&app->taskbar, window_w);
-    app->font = text_util_load_font(14);
-    /* loaded much larger than its display size (see label_scale in render.c)
-       so zoomed-in IC pin labels stay crisp instead of blurring from bitmap
-       upscaling - only used for those, everything else uses the regular font */
-    app->font_large = text_util_load_font(96); /* keep in sync with LABEL_FONT_POINT_SIZE in render.c */
-
+/* Shared by app_init and the New Schematic/Open File paths - clears every
+   piece of transient UI/edit state that either points into the circuit
+   (selection, drag indices, data_editor.editing) or would otherwise carry
+   over from whatever document was open a moment ago, and gives the (fresh
+   or freshly-loaded) circuit its own undo baseline. Does NOT touch
+   app->circuit or app->camera themselves - New Schematic and Open File need
+   different things there (reset vs repopulate), so those are the caller's
+   job. */
+static void app_reset_transient_state(App *app) {
     app->active_tool = TOOL_SELECT;
     app->place_ic_name = NULL;
-    app->window_w = window_w;
-    app->window_h = window_h;
-    app->running = 1;
 
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
@@ -57,16 +56,127 @@ void app_init(App *app, int window_w, int window_h) {
 
     data_editor_init(&app->data_editor);
 
+    app->taskbar.menu_open = 0;
+    app->taskbar.file_menu_open = 0;
+
     layer_panel_init(&app->layer_panel);
     app->active_layer_slot = app->circuit.layer_order[0];
+
+    /* baseline snapshot so the very first structural edit has something to
+       undo back to (the current circuit, empty or freshly loaded) - see
+       undo.h. A stale undo history from whatever document was open before
+       must never bleed into this one. */
+    undo_init();
+    undo_push(&app->circuit);
+}
+
+/* Builds "Isonic Developer x64 - <filename or Untitled><*if dirty>" and
+   applies it - called after every dirty/current_file_path change so the
+   titlebar always reflects what's actually open, and whether it's saved. */
+static void app_update_window_title(App *app) {
+    if (app->window == NULL) return;
+
+    const char *name = "Untitled";
+    if (app->current_file_path[0] != '\0') {
+        const char *slash1 = strrchr(app->current_file_path, '\\');
+        const char *slash2 = strrchr(app->current_file_path, '/');
+        name = app->current_file_path;
+        if (slash1 != NULL && slash1 + 1 > name) name = slash1 + 1;
+        if (slash2 != NULL && slash2 + 1 > name) name = slash2 + 1;
+    }
+
+    char title[600];
+    snprintf(title, sizeof(title), "Isonic Developer x64 - %s%s", name, app->dirty ? "*" : "");
+    SDL_SetWindowTitle(app->window, title);
+}
+
+void app_init(App *app, int window_w, int window_h, SDL_Window *window) {
+    app->window = window;
+    circuit_init(&app->circuit);
+    camera_init(&app->camera);
+    taskbar_init(&app->taskbar);
+    taskbar_layout(&app->taskbar, window_w);
+    app->font = text_util_load_font(14);
+    /* loaded much larger than its display size (see label_scale in render.c)
+       so zoomed-in IC pin labels stay crisp instead of blurring from bitmap
+       upscaling - only used for those, everything else uses the regular font */
+    app->font_large = text_util_load_font(96); /* keep in sync with LABEL_FONT_POINT_SIZE in render.c */
+
+    app->window_w = window_w;
+    app->window_h = window_h;
+    app->running = 1;
+
     app->shift_held = 0;
     app->layer_preview_locked = 0;
     app->shift_press_was_chord = 0;
 
-    /* baseline snapshot so the very first structural edit has something to
-       undo back to (the empty starting circuit) - see undo.h */
-    undo_init();
-    undo_push(&app->circuit);
+    settings_load(&app->settings);
+    settings_panel_init(&app->settings_panel, &app->settings);
+    app->dirty = 0;
+    app->current_file_path[0] = '\0';
+    app->last_autosave_tick = SDL_GetTicks();
+
+    app_reset_transient_state(app);
+}
+
+void app_new_schematic(App *app) {
+    circuit_init(&app->circuit);
+    camera_init(&app->camera);
+    app_reset_transient_state(app);
+    app->current_file_path[0] = '\0';
+    app->dirty = 0;
+    app_update_window_title(app);
+}
+
+void app_load_from_file(App *app, const char *path) {
+    if (!schematic_load(&app->circuit, path)) {
+        platform_show_error(app->window, "Could not open that file - it may not be a valid Isonic schematic.");
+        return;
+    }
+    camera_init(&app->camera);
+    app_reset_transient_state(app);
+    snprintf(app->current_file_path, sizeof(app->current_file_path), "%s", path);
+    app->dirty = 0;
+    app_update_window_title(app);
+}
+
+int app_save_current(App *app) {
+    if (app->current_file_path[0] == '\0') return app_save_as(app);
+    if (!schematic_save(&app->circuit, app->current_file_path)) {
+        platform_show_error(app->window, "Could not save the file.");
+        return 0;
+    }
+    app->dirty = 0;
+    app_update_window_title(app);
+    return 1;
+}
+
+int app_save_as(App *app) {
+    char path[ISONIC_PATH_MAX];
+    if (!platform_save_file_dialog(app->window, path, sizeof(path))) return 0;
+    if (!schematic_save(&app->circuit, path)) {
+        platform_show_error(app->window, "Could not save the file.");
+        return 0;
+    }
+    snprintf(app->current_file_path, sizeof(app->current_file_path), "%s", path);
+    app->dirty = 0;
+    app_update_window_title(app);
+    return 1;
+}
+
+int app_confirm_discard_if_dirty(App *app) {
+    if (!app->dirty) return 1;
+    PlatformDiscardChoice choice = platform_confirm_discard_changes(app->window);
+    if (choice == PLATFORM_DISCARD_CANCEL) return 0;
+    if (choice == PLATFORM_DISCARD_SAVE) {
+        if (!app_save_current(app)) return 0;
+    }
+    return 1;
+}
+
+void app_close_window(App *app) {
+    if (!app_confirm_discard_if_dirty(app)) return;
+    app->running = 0;
 }
 
 void app_shutdown(App *app) {
@@ -87,6 +197,20 @@ void app_update(App *app) {
        see diagnostics_compute's comment on why that matters for telling a
        real driver from a SIG_HIZ one */
     diagnostics_compute(&app->circuit, &app->diagnostics);
+
+    /* Autosave only ever writes to a document that already has a real file
+       path - an untitled document is never silently Save-As'd or written to
+       some hidden recovery file. */
+    if (app->settings.autosave_minutes > 0 && app->dirty && app->current_file_path[0] != '\0') {
+        Uint32 interval_ms = (Uint32)app->settings.autosave_minutes * 60000u;
+        if (SDL_GetTicks() - app->last_autosave_tick >= interval_ms) {
+            if (schematic_save(&app->circuit, app->current_file_path)) {
+                app->dirty = 0;
+                app_update_window_title(app);
+            }
+            app->last_autosave_tick = SDL_GetTicks();
+        }
+    }
 }
 
 float app_wire_hit_tolerance(const App *app) {
@@ -195,17 +319,24 @@ void app_render(App *app, SDL_Renderer *renderer) {
        whatever the mouse is simply hovering over. */
     int snap_component_a = -1, snap_wire_a = -1;
     int snap_component_b = -1, snap_wire_b = -1;
-    if (app->wiring) {
-        find_snap_target_at(app, app->wire_from_gx, app->wire_from_gy, &snap_component_a, &snap_wire_a);
-        find_snap_target_at(app, app->wire_cursor_gx, app->wire_cursor_gy, &snap_component_b, &snap_wire_b);
-    } else if (app->drag_kind == DRAG_NONE && !app->marquee_active) {
-        /* suppressed during a marquee drag - the box itself is the thing the
-           user is focused on, and a hover highlight flickering underneath it
-           as the cursor crosses components would just be confusing noise */
-        int mx, my;
-        SDL_GetMouseState(&mx, &my);
-        if (my >= TASKBAR_HEIGHT) {
-            find_hover_target_at(app, mx, my, &snap_component_a, &snap_wire_a);
+    /* the Settings popup is a true modal - the cursor must have zero effect
+       on the canvas while it's open, so no hover-highlight is computed at
+       all in that case (same reasoning as the marquee-suppression case
+       below, just for the whole block). */
+    if (!app->settings_panel.open) {
+        if (app->wiring) {
+            find_snap_target_at(app, app->wire_from_gx, app->wire_from_gy, &snap_component_a, &snap_wire_a);
+            find_snap_target_at(app, app->wire_cursor_gx, app->wire_cursor_gy, &snap_component_b, &snap_wire_b);
+        } else if (app->drag_kind == DRAG_NONE && !app->marquee_active) {
+            /* suppressed during a marquee drag - the box itself is the thing
+               the user is focused on, and a hover highlight flickering
+               underneath it as the cursor crosses components would just be
+               confusing noise */
+            int mx, my;
+            SDL_GetMouseState(&mx, &my);
+            if (my >= TASKBAR_HEIGHT) {
+                find_hover_target_at(app, mx, my, &snap_component_a, &snap_wire_a);
+            }
         }
     }
 
@@ -229,7 +360,8 @@ void app_render(App *app, SDL_Renderer *renderer) {
            seeing the placement ghost peek out from behind either looks like
            hovering it might place a part, which it doesn't (see
            taskbar_covers_point/data_editor_covers_point) */
-        if (!taskbar_covers_point(&app->taskbar, mx, my) && !data_editor_covers_point(&app->data_editor, mx, my)) {
+        if (!taskbar_covers_point(&app->taskbar, mx, my) && !data_editor_covers_point(&app->data_editor, mx, my) &&
+            !settings_panel_covers_point(&app->settings_panel, mx, my)) {
             int gx, gy, w, h;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             ic_dip_body_size(pending_ic->pin_count, &w, &h);
@@ -243,7 +375,8 @@ void app_render(App *app, SDL_Renderer *renderer) {
         SDL_GetMouseState(&mx, &my);
         if (my >= TASKBAR_HEIGHT && !taskbar_covers_point(&app->taskbar, mx, my) &&
             !data_editor_covers_point(&app->data_editor, mx, my) &&
-            !layer_panel_covers_point(&app->layer_panel, mx, my)) {
+            !layer_panel_covers_point(&app->layer_panel, mx, my) &&
+            !settings_panel_covers_point(&app->settings_panel, mx, my)) {
             float fx, fy;
             camera_screen_to_grid_f(&app->camera, mx, my, &fx, &fy);
             int node_x, node_y;
@@ -262,6 +395,20 @@ void app_render(App *app, SDL_Renderer *renderer) {
 
     int hover_mx, hover_my;
     SDL_GetMouseState(&hover_mx, &hover_my);
+
+    /* While the Settings modal is open, the cursor must have zero effect on
+       anything behind it - not just clicks (already gated in
+       input_handler.c) but hover state too: no taskbar/data-editor/layer-
+       panel button lighting up, no diagnostic/via tooltip. Feeding every
+       one of those calls an off-screen sentinel position achieves that in
+       one place instead of a separate guard in each - the modal itself
+       still gets the real position at the very end, below. */
+    int outside_hover_mx = hover_mx, outside_hover_my = hover_my;
+    if (app->settings_panel.open) {
+        outside_hover_mx = -1;
+        outside_hover_my = -1;
+    }
+
     /* place_ic_name itself is deliberately never cleared just for switching
        tools (see app.h - it's what lets reopening the Components dropdown or
        placing several copies in a row remember the last IC without
@@ -270,32 +417,38 @@ void app_render(App *app, SDL_Renderer *renderer) {
        otherwise it stays highlighted forever after switching to Select/
        Wire/Input, well past the place-mode it was actually meant to show. */
     const char *highlighted_ic = (app->active_tool == TOOL_PLACE_IC) ? app->place_ic_name : NULL;
-    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, highlighted_ic, hover_mx, hover_my);
+    taskbar_render(renderer, app->font, &app->taskbar, app->active_tool, highlighted_ic, outside_hover_mx, outside_hover_my);
     data_editor_render(renderer, app->font, &app->data_editor, data_editor_eligible(&app->circuit), &app->taskbar,
-                        app->window_w, app->window_h, hover_mx, hover_my);
+                        app->window_w, app->window_h, outside_hover_mx, outside_hover_my);
 
     /* slides left to sit beside the Manage Data panel instead of
        overlapping it, when that's open */
     int layer_panel_right_margin = app->data_editor.open ? app->data_editor.panel_rect.w : 0;
     layer_panel_render(renderer, app->font, &app->layer_panel, &app->circuit, app->active_layer_slot,
-                        app->window_w, layer_panel_right_margin, hover_mx, hover_my);
+                        app->window_w, app->window_h, layer_panel_right_margin, app->settings.layer_panel_anchor_left,
+                        outside_hover_mx, outside_hover_my);
 
     /* the bottom-left chip stack always renders on top of everything else;
        a hovered chip wins over a hovered canvas target if somehow both are
        true at once (they never overlap in practice - the panel sits over
        empty space at the bottom-left corner) */
-    int panel_hover = render_diagnostics_panel(renderer, app->font, app->window_h, &app->diagnostics, hover_mx, hover_my);
-    int hovered_diag = (panel_hover >= 0) ? panel_hover : find_diagnostic_hover_at(app, hover_mx, hover_my);
+    int panel_hover = render_diagnostics_panel(renderer, app->font, app->window_h, &app->diagnostics, outside_hover_mx, outside_hover_my);
+    int hovered_diag = (panel_hover >= 0) ? panel_hover : find_diagnostic_hover_at(app, outside_hover_mx, outside_hover_my);
     if (hovered_diag >= 0) {
         render_diagnostic_tooltip(renderer, app->font, &app->diagnostics.items[hovered_diag],
-                                   hover_mx, hover_my, app->window_w, app->window_h);
+                                   outside_hover_mx, outside_hover_my, app->window_w, app->window_h);
     } else {
-        int hovered_via = find_via_hover_at(app, hover_mx, hover_my);
+        int hovered_via = find_via_hover_at(app, outside_hover_mx, outside_hover_my);
         if (hovered_via >= 0) {
             const Via *v = &app->circuit.vias[hovered_via];
             render_via_tooltip(renderer, app->font, app->circuit.layers[v->layer_slot_a].name,
-                                app->circuit.layers[v->layer_slot_b].name, hover_mx, hover_my,
+                                app->circuit.layers[v->layer_slot_b].name, outside_hover_mx, outside_hover_my,
                                 app->window_w, app->window_h);
         }
     }
+
+    /* topmost - a true modal, drawn last so its scrim covers absolutely
+       everything else while open - this is the one call that gets the
+       REAL cursor position, so the popup's own buttons stay interactive. */
+    settings_panel_render(renderer, app->font, &app->settings_panel, app->window_w, app->window_h, hover_mx, hover_my);
 }

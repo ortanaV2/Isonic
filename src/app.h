@@ -9,8 +9,14 @@
 #include "diagnostics.h"
 #include "data_editor.h"
 #include "layer_panel.h"
+#include "settings.h"
+#include "settings_panel.h"
 
 #define MAX_DRAG_ATTACHMENTS 64
+/* Plain constant rather than pulling <windows.h>'s MAX_PATH into this
+   shared header - only platform_win32.c ever needs the real Windows
+   definition, everything else just needs "big enough for a path". */
+#define ISONIC_PATH_MAX 260
 /* Screen-pixel hit-testing tolerance shared by input_handler.c (click/select) and
    app.c (the temporary "you'd connect here" highlight while dragging a wire). */
 #define WIRE_HIT_TOLERANCE_PX 6.0f
@@ -145,9 +151,25 @@ typedef struct {
     int shift_held;
     int layer_preview_locked;
     int shift_press_was_chord;
+
+    /* File/Settings - see settings.h/settings_panel.h, schematic_io.h,
+       platform_win32.h. window is set once by app_init (passed down from
+       main.c) so file dialogs/messageboxes and SDL_SetWindowTitle have an
+       owner - nothing here ever destroys it, main.c still owns its
+       lifetime. current_file_path[0] == '\0' means "untitled, never saved
+       or opened". dirty tracks unsaved structural edits (see push_undo in
+       input_handler.c) for the New/Open/Close confirm-discard prompt and
+       autosave; it deliberately does NOT cover Manage Data EEPROM byte
+       edits, which live outside the undo model entirely (see undo.h). */
+    SDL_Window *window;
+    Settings settings;
+    SettingsPanel settings_panel;
+    int dirty;
+    char current_file_path[ISONIC_PATH_MAX];
+    Uint32 last_autosave_tick;
 } App;
 
-void app_init(App *app, int window_w, int window_h);
+void app_init(App *app, int window_w, int window_h, SDL_Window *window);
 void app_shutdown(App *app);
 
 /* Defined in input_handler.c */
@@ -169,5 +191,31 @@ const IC_Def *app_pending_place_ic(const App *app);
 /* WIRE_HIT_TOLERANCE_PX converted to grid units at the current zoom - the
    tolerance every wire/pin proximity hit-test in input_handler.c and app.c uses. */
 float app_wire_hit_tolerance(const App *app);
+
+/* File menu actions - see taskbar.h's FileMenuItem and input_handler.c's
+   dispatch. Unconditional (no dirty-check of their own) - New Window is the
+   only File action with genuinely no discard prompt to gate (it starts a
+   whole separate process); every other action's caller is expected to call
+   app_confirm_discard_if_dirty first, same as this file's own
+   app_close_window does. */
+void app_new_schematic(App *app);
+void app_load_from_file(App *app, const char *path);
+
+/* Save to current_file_path, falling through to a Save-As dialog if there
+   isn't one yet (untitled document). Returns 1 on success, 0 if the save
+   failed or the user cancelled a Save-As it fell through to. */
+int app_save_current(App *app);
+/* Always prompts a Save-As dialog, regardless of current_file_path. Returns
+   1 on success, 0 if cancelled or the save failed. */
+int app_save_as(App *app);
+
+/* The shared Save/Don't Save/Cancel gate New Schematic/Open File/Close
+   Window all start with - 1 if the caller should proceed (nothing was
+   dirty, or it was saved successfully first), 0 if the caller should abort
+   (Cancel, or a Save/Save-As that failed or was itself cancelled). */
+int app_confirm_discard_if_dirty(App *app);
+/* Confirms discard if needed, then sets app->running = 0 (reuses the main
+   loop's ordinary exit flag - no separate shutdown path). */
+void app_close_window(App *app);
 
 #endif

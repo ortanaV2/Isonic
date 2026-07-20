@@ -1,6 +1,16 @@
 #include "app.h"
 #include "render.h"
 #include "undo.h"
+#include "platform_win32.h"
+
+/* Every structural edit marks the document dirty (for the New/Open/Close
+   discard-confirm prompt and autosave, see app.h) at exactly the same call
+   sites this project's undo snapshots already use - "everything that would
+   be lost by discarding" and "everything undo tracks" are the same set. */
+static void push_undo(App *app) {
+    undo_push(&app->circuit);
+    app->dirty = 1;
+}
 
 /* Clears every .selected flag in the circuit, not just the tracked single
    ids - a marquee selection (see finish_marquee_select) can mark several
@@ -47,7 +57,7 @@ static void delete_selection(App *app) {
     }
     app->selected_component_id = -1;
     app->selected_wire_id = -1;
-    if (removed) undo_push(&app->circuit);
+    if (removed) push_undo(app);
 }
 
 /* Unmarks the wires temporarily highlighted for a DRAG_WIRE_NODE (see
@@ -83,6 +93,11 @@ static void cancel_transient_actions(App *app) {
    what the user was actually backing out of - so each level only falls
    through to the next once everything above it is already inactive. */
 static void handle_escape(App *app) {
+    /* a modal takes precedence over anything happening underneath it */
+    if (app->settings_panel.open) {
+        app->settings_panel.open = 0;
+        return;
+    }
     if (app_pending_place_ic(app) != NULL) {
         app->pasting = 0;
         if (app->active_tool == TOOL_PLACE_IC) app->active_tool = TOOL_SELECT;
@@ -165,15 +180,51 @@ static void set_active_tool(App *app, Tool tool) {
     app->active_tool = tool;
 }
 
-/* Returns 1 if the click was fully handled by the taskbar/dropdown (a tool
-   or IC was chosen, or it just hit chrome like a category fold arrow), 0 if
-   it missed everything and the caller should treat it as an ordinary canvas
-   click instead (see taskbar_handle_click's comment on why a miss can still
-   have closed an open dropdown as a side effect). */
+/* Each File dropdown action, dispatched to the matching app_* lifecycle
+   function (app.h) - Open prompts its dialog before the discard-confirm
+   check (no point asking to discard if the user's about to cancel Open
+   anyway); Save/Save As/Close Window each already do their own
+   confirm/fallback internally. New Window spawns a wholly independent
+   process, so it's the only action with no discard check at all. */
+static void dispatch_file_menu_item(App *app, FileMenuItem item) {
+    char path[ISONIC_PATH_MAX];
+    switch (item) {
+        case FILE_MENU_NEW_SCHEMATIC:
+            if (app_confirm_discard_if_dirty(app)) app_new_schematic(app);
+            break;
+        case FILE_MENU_NEW_WINDOW:
+            platform_spawn_new_instance();
+            break;
+        case FILE_MENU_OPEN:
+            if (platform_open_file_dialog(app->window, path, sizeof(path)) && app_confirm_discard_if_dirty(app)) {
+                app_load_from_file(app, path);
+            }
+            break;
+        case FILE_MENU_SAVE:
+            app_save_current(app);
+            break;
+        case FILE_MENU_SAVE_AS:
+            app_save_as(app);
+            break;
+        case FILE_MENU_CLOSE_WINDOW:
+            app_close_window(app);
+            break;
+        default:
+            break;
+    }
+}
+
+/* Returns 1 if the click was fully handled by the taskbar/dropdown(s) (a
+   tool or IC was chosen, a File action dispatched, Settings opened, or it
+   just hit chrome like a category fold arrow), 0 if it missed everything
+   and the caller should treat it as an ordinary canvas click instead (see
+   taskbar_handle_click's comment on why a miss can still have closed an
+   open dropdown as a side effect). */
 static int handle_taskbar_click(App *app, int mx, int my) {
     Tool tool;
     const char *ic_name;
-    TaskbarClickKind kind = taskbar_handle_click(&app->taskbar, mx, my, &tool, &ic_name);
+    FileMenuItem file_item;
+    TaskbarClickKind kind = taskbar_handle_click(&app->taskbar, mx, my, &tool, &ic_name, &file_item);
     if (kind == TASKBAR_CLICK_TOOL) {
         set_active_tool(app, tool);
         return 1;
@@ -181,6 +232,14 @@ static int handle_taskbar_click(App *app, int mx, int my) {
     if (kind == TASKBAR_CLICK_IC) {
         set_active_tool(app, TOOL_PLACE_IC);
         app->place_ic_name = ic_name;
+        return 1;
+    }
+    if (kind == TASKBAR_CLICK_FILE_MENU_ITEM) {
+        dispatch_file_menu_item(app, file_item);
+        return 1;
+    }
+    if (kind == TASKBAR_CLICK_SETTINGS) {
+        settings_panel_open(&app->settings_panel);
         return 1;
     }
     return kind == TASKBAR_CLICK_CONSUMED;
@@ -194,7 +253,7 @@ static int handle_taskbar_click(App *app, int mx, int my) {
 static int handle_layer_panel_click(App *app, int mx, int my, int double_click) {
     LayerPanelClickResult result = layer_panel_handle_click(&app->layer_panel, &app->circuit,
                                                               &app->active_layer_slot, mx, my, double_click);
-    if (result == LAYER_PANEL_CLICK_CHANGED) undo_push(&app->circuit);
+    if (result == LAYER_PANEL_CLICK_CHANGED) push_undo(app);
     return result != LAYER_PANEL_CLICK_MISS;
 }
 
@@ -226,7 +285,7 @@ static void handle_via_tool_click(App *app, float fx, float fy) {
     int wire_layer = circuit_wire_layer_at_point(&app->circuit, node_x, node_y);
     if (wire_layer < 0 || wire_layer == app->active_layer_slot) return;
     int new_id = circuit_add_via(&app->circuit, node_x, node_y, wire_layer, app->active_layer_slot);
-    if (new_id >= 0) undo_push(&app->circuit);
+    if (new_id >= 0) push_undo(app);
 }
 
 static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
@@ -239,7 +298,7 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
     int via_id = circuit_find_via_at(&app->circuit, gx, gy);
     if (via_id >= 0) {
         circuit_remove_via(&app->circuit, via_id);
-        undo_push(&app->circuit);
+        push_undo(app);
         return;
     }
 
@@ -251,14 +310,14 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
     if (comp_id >= 0) {
         if (comp_id == app->selected_component_id) app->selected_component_id = -1;
         circuit_remove_component(&app->circuit, comp_id);
-        undo_push(&app->circuit);
+        push_undo(app);
         return;
     }
     int wire_id = circuit_find_wire_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
     if (wire_id >= 0) {
         if (wire_id == app->selected_wire_id) app->selected_wire_id = -1;
         circuit_remove_wire(&app->circuit, wire_id);
-        undo_push(&app->circuit);
+        push_undo(app);
     }
 }
 
@@ -568,7 +627,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
             int new_id = circuit_add_ic(&app->circuit, gx, gy, place_def);
             if (new_id >= 0) {
                 select_component(app, new_id);
-                undo_push(&app->circuit);
+                push_undo(app);
             }
         }
         return;
@@ -638,7 +697,7 @@ static void finish_wire(App *app, int gx, int gy) {
         new_id = circuit_add_wire(&app->circuit, gx, gy, app->wire_from_gx, app->wire_from_gy, app->wiring_kind,
                                    app->active_layer_slot);
     }
-    if (new_id >= 0) undo_push(&app->circuit); /* -1 means from == to - no wire was actually added */
+    if (new_id >= 0) push_undo(app); /* -1 means from == to - no wire was actually added */
 }
 
 static void finish_drag(App *app) {
@@ -651,7 +710,7 @@ static void finish_drag(App *app) {
         if (app->drag_click_component_id >= 0) select_component(app, app->drag_click_component_id);
         else if (app->drag_click_wire_id >= 0) select_wire(app, app->drag_click_wire_id);
     }
-    if (app->drag_moved) undo_push(&app->circuit);
+    if (app->drag_moved) push_undo(app);
     clear_wire_node_marks(app);
     app->drag_kind = DRAG_NONE;
     app->drag_attach_count = 0;
@@ -704,6 +763,7 @@ void app_handle_event(App *app, const SDL_Event *event) {
         case SDL_MOUSEWHEEL: {
             int mx, my;
             SDL_GetMouseState(&mx, &my);
+            if (settings_panel_covers_point(&app->settings_panel, mx, my)) break;
             if (!data_editor_handle_wheel(&app->data_editor, mx, my, event->wheel.y)) {
                 camera_zoom_at(&app->camera, mx, my, event->wheel.y);
             }
@@ -716,13 +776,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                DeathAdder's two thumb buttons) act as undo/redo globally,
                same as the keyboard shortcuts - not gated by taskbar/panel
                bounds like a left click is, since there's no "click through
-               to the canvas" fallback meaning for these buttons anyway. */
+               to the canvas" fallback meaning for these buttons anyway.
+               Settings is a true modal though, so it still wins over even
+               these - undoing/redoing the canvas underneath an open popup
+               would be surprising. */
             if (event->button.button == SDL_BUTTON_X1) {
-                perform_undo(app);
+                if (!app->settings_panel.open) perform_undo(app);
                 break;
             }
             if (event->button.button == SDL_BUTTON_X2) {
-                perform_redo(app);
+                if (!app->settings_panel.open) perform_redo(app);
                 break;
             }
             /* the Components dropdown can extend below TASKBAR_HEIGHT while
@@ -734,12 +797,19 @@ void app_handle_event(App *app, const SDL_Event *event) {
                taskbar chrome, same as before. Manage Data's button/panel get
                the same treatment right after, for the same reason. */
             if (event->button.button == SDL_BUTTON_LEFT) {
+                /* Settings is a true modal - while open it must intercept
+                   every click before anything else gets a chance, including
+                   clicks on the File/Settings buttons themselves (clicking
+                   File while Settings is open should just close Settings,
+                   not also open the File dropdown that same click). */
+                if (settings_panel_handle_click(&app->settings_panel, mx, my) != SETTINGS_PANEL_CLICK_MISS) break;
                 if (handle_taskbar_click(app, mx, my)) break;
                 if (data_editor_handle_click(&app->data_editor, data_editor_eligible(&app->circuit), mx, my)) break;
                 if (handle_layer_panel_click(app, mx, my, event->button.clicks >= 2)) break;
             } else if (taskbar_covers_point(&app->taskbar, mx, my) ||
                        data_editor_covers_point(&app->data_editor, mx, my) ||
-                       layer_panel_covers_point(&app->layer_panel, mx, my)) {
+                       layer_panel_covers_point(&app->layer_panel, mx, my) ||
+                       settings_panel_covers_point(&app->settings_panel, mx, my)) {
                 break;
             }
             if (my < TASKBAR_HEIGHT) break; /* an empty gap in the taskbar strip itself */
@@ -851,12 +921,30 @@ void app_handle_event(App *app, const SDL_Event *event) {
         case SDL_KEYDOWN: {
             SDL_Scancode sc = event->key.keysym.scancode;
 
+            /* a keybind capture or the Settings autosave field owns every
+               key while active - it must be checked before anything else
+               below, including layer_panel's own editing gate, the same way
+               a modal takes priority over the canvas in handle_escape. */
+            if (settings_panel_is_capturing_key(&app->settings_panel)) {
+                settings_panel_handle_key(&app->settings_panel, sc);
+                break;
+            }
+            /* the popup is still a modal even when idle (not currently
+               capturing a keybind or editing the autosave field) - every
+               canvas shortcut below must stay swallowed while it's open, or
+               e.g. Ctrl+Z would undo the circuit underneath it. Escape still
+               closes it (see handle_escape's own top-priority check). */
+            if (app->settings_panel.open) {
+                if (sc == SDL_SCANCODE_ESCAPE) handle_escape(app);
+                break;
+            }
+
             /* while renaming/adding a layer, the text-input widget owns
                every key - typing "w"/"v"/a digit must not also switch tools
                or the active layer out from under the field being edited */
             if (layer_panel_is_editing(&app->layer_panel)) {
                 LayerPanelClickResult result = layer_panel_handle_key(&app->layer_panel, &app->circuit, sc);
-                if (result == LAYER_PANEL_CLICK_CHANGED) undo_push(&app->circuit);
+                if (result == LAYER_PANEL_CLICK_CHANGED) push_undo(app);
                 break;
             }
 
@@ -864,12 +952,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 handle_escape(app);
-            } else if (sc == SDL_SCANCODE_W) {
+            } else if (sc == app->settings.keybind[KEYBIND_WIRE]) {
                 set_active_tool(app, TOOL_WIRE);
-            } else if (sc == SDL_SCANCODE_V) {
+            } else if (sc == app->settings.keybind[KEYBIND_VIA]) {
                 set_active_tool(app, TOOL_VIA);
-            } else if (sc == SDL_SCANCODE_SPACE) {
+            } else if (sc == app->settings.keybind[KEYBIND_SELECT]) {
                 set_active_tool(app, TOOL_SELECT);
+            } else if (sc == app->settings.keybind[KEYBIND_INPUT]) {
+                set_active_tool(app, TOOL_INPUT);
+            } else if (sc == app->settings.keybind[KEYBIND_OUTPUT]) {
+                set_active_tool(app, TOOL_OUTPUT);
             } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
                 /* picks which layer new wires route on - a plain field
                    assignment, not structural, so no undo_push (see
@@ -878,12 +970,12 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 if (pos < app->circuit.layer_order_count) {
                     app->active_layer_slot = app->circuit.layer_order[pos];
                 }
-            } else if (sc == SDL_SCANCODE_C && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (sc == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
                 copy_selected_component(app);
-            } else if (sc == SDL_SCANCODE_Z && (event->key.keysym.mod & KMOD_CTRL)) {
-                if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+Z */
+            } else if (sc == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
+                if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+<undo key> */
                 else perform_undo(app);
-            } else if (sc == SDL_SCANCODE_Y && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (sc == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 perform_redo(app);
             } else if ((sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) && !event->key.repeat) {
                 app->shift_held = 1;
@@ -920,7 +1012,9 @@ void app_handle_event(App *app, const SDL_Event *event) {
         }
 
         case SDL_TEXTINPUT:
-            if (layer_panel_is_editing(&app->layer_panel)) {
+            if (settings_panel_is_capturing_key(&app->settings_panel)) {
+                settings_panel_text_input(&app->settings_panel, event->text.text);
+            } else if (layer_panel_is_editing(&app->layer_panel)) {
                 layer_panel_text_input(&app->layer_panel, event->text.text);
             }
             break;

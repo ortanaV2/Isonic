@@ -3,7 +3,7 @@ WINDRES := windres
 TARGET := isonic.exe
 
 CFLAGS := -std=c11 -Wall -Wextra -O2 $(shell sdl2-config --cflags)
-LDFLAGS := $(shell sdl2-config --libs) -lSDL2_ttf -lm -ldwmapi -luxtheme
+LDFLAGS := $(shell sdl2-config --libs) -lSDL2_ttf -lm -ldwmapi -luxtheme -lcomdlg32
 
 SRC := $(wildcard src/*.c) $(wildcard src/ics/*.c)
 OBJ := $(SRC:.c=.o)

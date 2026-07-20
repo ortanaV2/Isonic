@@ -12,6 +12,15 @@ static const char *k_labels[TOOL_COUNT] = {
     "Components",
 };
 
+static const char *k_file_menu_labels[FILE_MENU_COUNT] = {
+    "New Schematic",
+    "New Window",
+    "Open File...",
+    "Save",
+    "Save As...",
+    "Close Window",
+};
+
 static const char *k_category_labels[MENU_CAT_COUNT] = {
     "Logic Gates",
     "Multiplexers",
@@ -57,6 +66,15 @@ static const MenuItem k_menu_items[] = {
 #define MENU_ROW_H 26
 #define MENU_ROW_INDENT 16
 #define MENU_PANEL_W 300
+/* Narrower than the Components dropdown - a flat 6-item action list doesn't
+   need the extra width that panel's longer IC labels do. */
+#define FILE_MENU_PANEL_W 200
+
+/* Extra breathing room between the File/Settings group and the tool group,
+   on top of the usual BUTTON_MARGIN each side already gets - wide enough
+   that the divider line drawn through its middle reads as a real separator
+   rather than a slightly uneven button gap. */
+#define GROUP_GAP 18
 
 /* Basic-tool button icons (Select/Wire/Input/Output - the Components trigger
    has no single-glyph metaphor, so it stays text-only). Hand-drawn vector
@@ -231,6 +249,66 @@ static void draw_output_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Co
     icon_fill_fan(renderer, head, 3, col);
 }
 
+/* File: a page with its top-right corner folded down (the universal
+   "document" pictogram), plus a few text-line strokes so it doesn't read as
+   a blank rectangle. Outline-only, same thick-line-plus-joint-dot technique
+   as draw_wire_icon/draw_terminal_door. */
+static void draw_file_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Color col) {
+    SDL_FPoint a = icon_pt(box, 0.22f, 0.08f);
+    SDL_FPoint b = icon_pt(box, 0.60f, 0.08f);
+    SDL_FPoint f = icon_pt(box, 0.60f, 0.28f); /* folded-corner flap */
+    SDL_FPoint c = icon_pt(box, 0.80f, 0.28f);
+    SDL_FPoint d = icon_pt(box, 0.80f, 0.92f);
+    SDL_FPoint e = icon_pt(box, 0.22f, 0.92f);
+    float thick = box->h * 0.08f;
+
+    icon_fill_thick_line(renderer, a.x, a.y, b.x, b.y, thick, col);
+    icon_fill_thick_line(renderer, b.x, b.y, f.x, f.y, thick, col);
+    icon_fill_thick_line(renderer, f.x, f.y, c.x, c.y, thick, col);
+    icon_fill_thick_line(renderer, c.x, c.y, d.x, d.y, thick, col);
+    icon_fill_thick_line(renderer, d.x, d.y, e.x, e.y, thick, col);
+    icon_fill_thick_line(renderer, e.x, e.y, a.x, a.y, thick, col);
+    SDL_FPoint joints[6] = { a, b, f, c, d, e };
+    for (int i = 0; i < 6; i++) icon_fill_circle(renderer, joints[i].x, joints[i].y, thick * 0.5f, col);
+
+    float ys[3] = { 0.48f, 0.62f, 0.76f };
+    for (int i = 0; i < 3; i++) {
+        SDL_FPoint s0 = icon_pt(box, 0.34f, ys[i]);
+        SDL_FPoint s1 = icon_pt(box, 0.68f, ys[i]);
+        icon_fill_thick_line(renderer, s0.x, s0.y, s1.x, s1.y, thick * 0.75f, col);
+    }
+}
+
+/* Settings: a gear - the same ring-of-segments annulus draw_via_icon uses,
+   with teeth radiating outward - the universal "configuration" pictogram. */
+static void draw_settings_icon(SDL_Renderer *renderer, const SDL_Rect *box, SDL_Color col) {
+    SDL_FPoint center = icon_pt(box, 0.5f, 0.5f);
+    float ring_r = box->w * 0.24f;
+    float ring_thick = box->w * 0.11f;
+    const int segs = ICON_CIRCLE_SEGMENTS;
+    for (int i = 0; i < segs; i++) {
+        float a0 = (float)i / segs * 6.28318530718f;
+        float a1 = (float)(i + 1) / segs * 6.28318530718f;
+        icon_fill_thick_line(renderer, center.x + cosf(a0) * ring_r, center.y + sinf(a0) * ring_r,
+                              center.x + cosf(a1) * ring_r, center.y + sinf(a1) * ring_r, ring_thick, col);
+    }
+
+    const int tooth_count = 8;
+    /* Starts inside the ring's own band (ring_r +/- ring_thick/2), not right
+       at its nominal outer edge - the ring is a coarse straight-segment
+       polygon so its true edge dips slightly below that between vertices,
+       which left a hairline gap before each tooth at that radius. */
+    float r_in = ring_r;
+    float r_out = box->w * 0.43f;
+    float tooth_thick = box->w * 0.12f;
+    for (int i = 0; i < tooth_count; i++) {
+        float a = (float)i / tooth_count * 6.28318530718f;
+        float ca = cosf(a), sa = sinf(a);
+        icon_fill_thick_line(renderer, center.x + ca * r_in, center.y + sa * r_in,
+                              center.x + ca * r_out, center.y + sa * r_out, tooth_thick, col);
+    }
+}
+
 /* TOOL_PLACE_IC (Components) has no icon - dispatched separately in
    taskbar_render, which only calls this for the four basic tools. */
 static void draw_tool_icon(SDL_Renderer *renderer, Tool tool, const SDL_Rect *box, SDL_Color col) {
@@ -246,6 +324,10 @@ static void draw_tool_icon(SDL_Renderer *renderer, Tool tool, const SDL_Rect *bo
 
 void taskbar_init(Taskbar *tb) {
     for (int i = 0; i < TOOL_COUNT; i++) tb->label_textures[i] = NULL;
+    tb->file_label_texture = NULL;
+    tb->settings_label_texture = NULL;
+    for (int i = 0; i < FILE_MENU_COUNT; i++) tb->file_menu_item_textures[i] = NULL;
+    tb->file_menu_open = 0;
     for (int c = 0; c < MENU_CAT_COUNT; c++) {
         tb->category_textures[c][0] = NULL;
         tb->category_textures[c][1] = NULL;
@@ -261,6 +343,20 @@ void taskbar_shutdown(Taskbar *tb) {
         if (tb->label_textures[i] != NULL) {
             SDL_DestroyTexture(tb->label_textures[i]);
             tb->label_textures[i] = NULL;
+        }
+    }
+    if (tb->file_label_texture != NULL) {
+        SDL_DestroyTexture(tb->file_label_texture);
+        tb->file_label_texture = NULL;
+    }
+    if (tb->settings_label_texture != NULL) {
+        SDL_DestroyTexture(tb->settings_label_texture);
+        tb->settings_label_texture = NULL;
+    }
+    for (int i = 0; i < FILE_MENU_COUNT; i++) {
+        if (tb->file_menu_item_textures[i] != NULL) {
+            SDL_DestroyTexture(tb->file_menu_item_textures[i]);
+            tb->file_menu_item_textures[i] = NULL;
         }
     }
     for (int c = 0; c < MENU_CAT_COUNT; c++) {
@@ -298,6 +394,30 @@ static SDL_Texture *get_label_texture(SDL_Renderer *renderer, Taskbar *tb, TTF_F
     return tb->label_textures[i];
 }
 
+/* Same lazy-build-once caching as get_label_texture, but for a texture slot
+   that isn't Tool-indexed (File/Settings) - takes the cache slot directly. */
+static SDL_Texture *get_named_texture(SDL_Renderer *renderer, SDL_Texture **slot, TTF_Font *font, const char *text) {
+    if (*slot != NULL || font == NULL) return *slot;
+    *slot = build_texture(renderer, font, text);
+    return *slot;
+}
+
+/* Draws a button's hover-name as a small floating tooltip just below it -
+   shared by the tool buttons and the File/Settings buttons. */
+static void draw_hover_tooltip(SDL_Renderer *renderer, SDL_Texture *label, const SDL_Rect *r) {
+    if (label == NULL) return;
+    int tw = 0, th = 0;
+    SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+    int pad = 6;
+    SDL_Rect bg = { r->x, r->y + r->h + 4, tw + pad * 2, th + pad * 2 };
+    SDL_SetRenderDrawColor(renderer, 25, 25, 28, 235);
+    SDL_RenderFillRect(renderer, &bg);
+    SDL_SetRenderDrawColor(renderer, 70, 70, 78, 255);
+    SDL_RenderDrawRect(renderer, &bg);
+    SDL_Rect dst = { bg.x + pad, bg.y + pad, tw, th };
+    SDL_RenderCopy(renderer, label, NULL, &dst);
+}
+
 static SDL_Texture *get_category_texture(SDL_Renderer *renderer, Taskbar *tb, TTF_Font *font, int cat, int expanded) {
     int slot = expanded ? 1 : 0;
     if (tb->category_textures[cat][slot] != NULL || font == NULL) return tb->category_textures[cat][slot];
@@ -313,25 +433,54 @@ static SDL_Texture *get_item_texture(SDL_Renderer *renderer, Taskbar *tb, TTF_Fo
     return tb->item_textures[item_index];
 }
 
+static SDL_Texture *get_file_menu_item_texture(SDL_Renderer *renderer, Taskbar *tb, TTF_Font *font, int item_index) {
+    if (tb->file_menu_item_textures[item_index] != NULL || font == NULL) return tb->file_menu_item_textures[item_index];
+    tb->file_menu_item_textures[item_index] = build_texture(renderer, font, k_file_menu_labels[item_index]);
+    return tb->file_menu_item_textures[item_index];
+}
+
+/* The File dropdown's rows, top-to-bottom, anchored just below the File
+   trigger button - flat/uncategorized, structurally the simplest case of
+   what layout_menu_rows below does for the Components dropdown. */
+static int layout_file_menu_rows(const Taskbar *tb, SDL_Rect *out_rows, int max_rows) {
+    int n = 0;
+    int x = tb->file_button_rect.x;
+    int y = TASKBAR_HEIGHT;
+    for (int i = 0; i < FILE_MENU_COUNT && n < max_rows; i++) {
+        out_rows[n] = (SDL_Rect){ x, y, FILE_MENU_PANEL_W, MENU_ROW_H };
+        n++;
+        y += MENU_ROW_H;
+    }
+    return n;
+}
+
 /* The four icon tools (Select/Wire/Input/Output) are icon-only buttons now -
    their label only shows up as a hover tooltip (see taskbar_render), so the
    button itself doesn't need to be sized to fit the text. Components has no
    icon and stays a normal always-visible text button. */
 void taskbar_layout(Taskbar *tb, int window_w) {
     (void)window_w;
+    int icon_btn_w = BUTTON_PADDING_X + ICON_BOX + BUTTON_PADDING_X;
+    int btn_h = TASKBAR_HEIGHT - BUTTON_MARGIN * 2;
+
     int x = BUTTON_MARGIN;
+    tb->file_button_rect = (SDL_Rect){ x, BUTTON_MARGIN, icon_btn_w, btn_h };
+    x += icon_btn_w + BUTTON_MARGIN;
+    tb->settings_button_rect = (SDL_Rect){ x, BUTTON_MARGIN, icon_btn_w, btn_h };
+    x += icon_btn_w + GROUP_GAP;
+
     for (int i = 0; i < TOOL_COUNT; i++) {
         int w;
         if (i == TOOL_PLACE_IC) {
             int text_w = (int)(8 * strlen(k_labels[i]));
             w = BUTTON_PADDING_X + text_w + BUTTON_PADDING_X;
         } else {
-            w = BUTTON_PADDING_X + ICON_BOX + BUTTON_PADDING_X;
+            w = icon_btn_w;
         }
         tb->button_rects[i].x = x;
         tb->button_rects[i].y = BUTTON_MARGIN;
         tb->button_rects[i].w = w;
-        tb->button_rects[i].h = TASKBAR_HEIGHT - BUTTON_MARGIN * 2;
+        tb->button_rects[i].h = btn_h;
         x += w + BUTTON_MARGIN;
     }
 }
@@ -381,6 +530,35 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
     SDL_SetRenderDrawColor(renderer, 40, 40, 44, 255);
     SDL_RenderFillRect(renderer, &bar);
 
+    /* File/Settings - their own group, separate from the tool buttons (see
+       GROUP_GAP in taskbar_layout). No "active" state of their own, just
+       hover, since they're one-shot actions rather than a persistent mode. */
+    int hovered_file = (hover_x >= tb->file_button_rect.x && hover_x < tb->file_button_rect.x + tb->file_button_rect.w &&
+                         hover_y >= tb->file_button_rect.y && hover_y < tb->file_button_rect.y + tb->file_button_rect.h);
+    int hovered_settings = (hover_x >= tb->settings_button_rect.x && hover_x < tb->settings_button_rect.x + tb->settings_button_rect.w &&
+                             hover_y >= tb->settings_button_rect.y && hover_y < tb->settings_button_rect.y + tb->settings_button_rect.h);
+    SDL_Color group_icon_col = { 235, 235, 235, 255 };
+
+    SDL_SetRenderDrawColor(renderer, hovered_file ? 76 : 60, hovered_file ? 76 : 60, hovered_file ? 84 : 66, 255);
+    SDL_RenderFillRect(renderer, &tb->file_button_rect);
+    SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
+    SDL_RenderDrawRect(renderer, &tb->file_button_rect);
+    SDL_Rect file_icon_box = { tb->file_button_rect.x + (tb->file_button_rect.w - ICON_BOX) / 2,
+                                tb->file_button_rect.y + (tb->file_button_rect.h - ICON_BOX) / 2, ICON_BOX, ICON_BOX };
+    draw_file_icon(renderer, &file_icon_box, group_icon_col);
+
+    SDL_SetRenderDrawColor(renderer, hovered_settings ? 76 : 60, hovered_settings ? 76 : 60, hovered_settings ? 84 : 66, 255);
+    SDL_RenderFillRect(renderer, &tb->settings_button_rect);
+    SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
+    SDL_RenderDrawRect(renderer, &tb->settings_button_rect);
+    SDL_Rect settings_icon_box = { tb->settings_button_rect.x + (tb->settings_button_rect.w - ICON_BOX) / 2,
+                                    tb->settings_button_rect.y + (tb->settings_button_rect.h - ICON_BOX) / 2, ICON_BOX, ICON_BOX };
+    draw_settings_icon(renderer, &settings_icon_box, group_icon_col);
+
+    int divider_x = (tb->settings_button_rect.x + tb->settings_button_rect.w + tb->button_rects[TOOL_SELECT].x) / 2;
+    SDL_SetRenderDrawColor(renderer, 60, 60, 66, 255);
+    SDL_RenderDrawLine(renderer, divider_x, BUTTON_MARGIN + 3, divider_x, TASKBAR_HEIGHT - BUTTON_MARGIN - 3);
+
     /* -1 = no icon tool is hovered; used below to draw that button's label
        as a floating tooltip once every button/icon has already been drawn,
        so the tooltip is never drawn over by a later button. */
@@ -421,19 +599,46 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
        its button - the only place that label shows up now that the button
        itself is icon-only */
     if (hovered_tool >= 0 && hovered_tool != TOOL_PLACE_IC) {
-        SDL_Texture *label = get_label_texture(renderer, tb, font, hovered_tool);
-        if (label != NULL) {
-            int tw = 0, th = 0;
-            SDL_QueryTexture(label, NULL, NULL, &tw, &th);
-            const SDL_Rect *r = &tb->button_rects[hovered_tool];
-            int pad = 6;
-            SDL_Rect bg = { r->x, r->y + r->h + 4, tw + pad * 2, th + pad * 2 };
-            SDL_SetRenderDrawColor(renderer, 25, 25, 28, 235);
-            SDL_RenderFillRect(renderer, &bg);
-            SDL_SetRenderDrawColor(renderer, 70, 70, 78, 255);
-            SDL_RenderDrawRect(renderer, &bg);
-            SDL_Rect dst = { bg.x + pad, bg.y + pad, tw, th };
-            SDL_RenderCopy(renderer, label, NULL, &dst);
+        draw_hover_tooltip(renderer, get_label_texture(renderer, tb, font, hovered_tool), &tb->button_rects[hovered_tool]);
+    }
+    /* both labels are suppressed together while the File dropdown is open -
+       it visually sits right behind both buttons, so a floating "File" or
+       "Settings" tooltip would peek out from underneath it. The Settings
+       popup is a separate, centered modal that doesn't sit behind either
+       button, so it never suppresses these - hovering still shows them
+       normally (just dimmed under the popup's own scrim, same as the rest
+       of the taskbar). */
+    if (hovered_file && !tb->file_menu_open) {
+        draw_hover_tooltip(renderer, get_named_texture(renderer, &tb->file_label_texture, font, "File"), &tb->file_button_rect);
+    }
+    if (hovered_settings && !tb->file_menu_open) {
+        draw_hover_tooltip(renderer, get_named_texture(renderer, &tb->settings_label_texture, font, "Settings"), &tb->settings_button_rect);
+    }
+
+    if (tb->file_menu_open) {
+        SDL_Rect frows[FILE_MENU_COUNT];
+        int fn = layout_file_menu_rows(tb, frows, FILE_MENU_COUNT);
+        if (fn > 0) {
+            SDL_Rect panel = { frows[0].x, frows[0].y, FILE_MENU_PANEL_W,
+                                frows[fn - 1].y + frows[fn - 1].h - frows[0].y };
+            SDL_SetRenderDrawColor(renderer, 32, 32, 36, 245);
+            SDL_RenderFillRect(renderer, &panel);
+            SDL_SetRenderDrawColor(renderer, 20, 20, 22, 255);
+            SDL_RenderDrawRect(renderer, &panel);
+
+            for (int i = 0; i < fn; i++) {
+                int hovered = (hover_x >= frows[i].x && hover_x < frows[i].x + frows[i].w &&
+                               hover_y >= frows[i].y && hover_y < frows[i].y + frows[i].h);
+                SDL_SetRenderDrawColor(renderer, hovered ? 56 : 40, hovered ? 56 : 40, hovered ? 62 : 44, 255);
+                SDL_RenderFillRect(renderer, &frows[i]);
+                SDL_Texture *label = get_file_menu_item_texture(renderer, tb, font, i);
+                if (label != NULL) {
+                    int tw = 0, th = 0;
+                    SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+                    SDL_Rect dst = { frows[i].x + MENU_ROW_INDENT, frows[i].y + (frows[i].h - th) / 2, tw, th };
+                    SDL_RenderCopy(renderer, label, NULL, &dst);
+                }
+            }
         }
     }
 
@@ -482,10 +687,25 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
     }
 }
 
-TaskbarClickKind taskbar_handle_click(Taskbar *tb, int x, int y, Tool *out_tool, const char **out_ic_name) {
+TaskbarClickKind taskbar_handle_click(Taskbar *tb, int x, int y, Tool *out_tool, const char **out_ic_name,
+                                       FileMenuItem *out_file_item) {
+    const SDL_Rect *fr = &tb->file_button_rect;
+    if (x >= fr->x && x < fr->x + fr->w && y >= fr->y && y < fr->y + fr->h) {
+        tb->menu_open = 0;
+        tb->file_menu_open = !tb->file_menu_open;
+        return TASKBAR_CLICK_CONSUMED;
+    }
+    const SDL_Rect *sr = &tb->settings_button_rect;
+    if (x >= sr->x && x < sr->x + sr->w && y >= sr->y && y < sr->y + sr->h) {
+        tb->menu_open = 0;
+        tb->file_menu_open = 0;
+        return TASKBAR_CLICK_SETTINGS;
+    }
+
     for (int i = 0; i < TOOL_COUNT; i++) {
         const SDL_Rect *r = &tb->button_rects[i];
         if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) {
+            tb->file_menu_open = 0;
             if (i == TOOL_PLACE_IC) {
                 tb->menu_open = !tb->menu_open;
                 return TASKBAR_CLICK_CONSUMED;
@@ -494,6 +714,20 @@ TaskbarClickKind taskbar_handle_click(Taskbar *tb, int x, int y, Tool *out_tool,
             *out_tool = (Tool)i;
             return TASKBAR_CLICK_TOOL;
         }
+    }
+
+    if (tb->file_menu_open) {
+        SDL_Rect frows[FILE_MENU_COUNT];
+        int fn = layout_file_menu_rows(tb, frows, FILE_MENU_COUNT);
+        for (int i = 0; i < fn; i++) {
+            const SDL_Rect *r = &frows[i];
+            if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) {
+                tb->file_menu_open = 0;
+                *out_file_item = (FileMenuItem)i;
+                return TASKBAR_CLICK_FILE_MENU_ITEM;
+            }
+        }
+        tb->file_menu_open = 0; /* clicked elsewhere while open - dismiss it, same as any dropdown */
     }
 
     if (tb->menu_open) {
@@ -519,6 +753,17 @@ TaskbarClickKind taskbar_handle_click(Taskbar *tb, int x, int y, Tool *out_tool,
 
 int taskbar_covers_point(const Taskbar *tb, int x, int y) {
     if (y < TASKBAR_HEIGHT) return 1;
+
+    if (tb->file_menu_open) {
+        SDL_Rect frows[FILE_MENU_COUNT];
+        int fn = layout_file_menu_rows(tb, frows, FILE_MENU_COUNT);
+        if (fn > 0) {
+            int fx0 = frows[0].x, fy0 = frows[0].y, fx1 = fx0 + FILE_MENU_PANEL_W;
+            int fy1 = frows[fn - 1].y + frows[fn - 1].h;
+            if (x >= fx0 && x < fx1 && y >= fy0 && y < fy1) return 1;
+        }
+    }
+
     if (!tb->menu_open) return 0;
 
     MenuRow rows[MENU_MAX_ROWS];
