@@ -86,6 +86,27 @@ static int layer_is_outer(const Circuit *circuit, int layer_slot) {
            layer_slot == circuit->layer_order[circuit->layer_order_count - 1];
 }
 
+/* True if a component pin can connect directly to a wire on layer_slot -
+   either it's one of the two outer layers (real through-hole pins only
+   reach the top/bottom copper), OR it's the GND/+5V plane. The latter is
+   deliberately NOT limited to outer position: LAYER_ROLE_GND/POWER are
+   already modeled as an idealized, always-tappable plane rather than a real
+   routed copper layer (see their own doc comment in circuit.h - "tapping in
+   anywhere on the layer is enough, no routed path needed, same as a real
+   ground/power pour") - by default they sit BETWEEN the two signal layers
+   (circuit_init's default stack is TOP-Signal, GND, +5V, BOTTOM-Signal), so
+   requiring outer position too would make it impossible for a pin to ever
+   reach +5V/GND at all without the user first reordering layers, silently
+   defeating the entire point of a dedicated power/ground layer - a wire
+   "connected to +5V" should just always read HIGH, full stop, the same way
+   Falstad/KiCad-style power symbols work, not something gated behind PCB
+   stack-position realism that only makes sense for actual routed traces. */
+static int layer_reaches_pins(const Circuit *circuit, int layer_slot) {
+    if (layer_is_outer(circuit, layer_slot)) return 1;
+    LayerRole role = circuit->layers[layer_slot].role;
+    return role == LAYER_ROLE_GND || role == LAYER_ROLE_POWER;
+}
+
 /* Places a via without rebuilding nets (callers that place several, or that
    are about to rebuild anyway right after, do it once themselves) - no-ops
    if that exact layer pair is already bridged there. */
@@ -532,12 +553,11 @@ void circuit_rebuild_nets(Circuit *circuit) {
 
     /* Points sharing a coordinate only union pairwise when the connection is
        actually legal: two pins always connect; a pin connects to a wire only
-       if that wire is on one of the two outer layers (real through-hole pins
-       only reach the top/bottom copper, see layer_is_outer); two wires
-       connect if they're on the same layer, or a via at this exact point
-       bridges their two layers. Groups are always small in practice (a
-       handful of things ever share one grid point), so the O(n^2) pairwise
-       check here is cheap. */
+       if that wire is on one of the two outer layers, or is the GND/+5V
+       plane (see layer_reaches_pins); two wires connect if they're on the
+       same layer, or a via at this exact point bridges their two layers.
+       Groups are always small in practice (a handful of things ever share
+       one grid point), so the O(n^2) pairwise check here is cheap. */
     int k = 0;
     while (k < poi_count) {
         int j = k + 1;
@@ -551,7 +571,7 @@ void circuit_rebuild_nets(Circuit *circuit) {
                     should_union = 1;
                 } else if (a_is_pin || b_is_pin) {
                     int wire_layer = a_is_pin ? poi[b].layer_slot : poi[a].layer_slot;
-                    should_union = layer_is_outer(circuit, wire_layer);
+                    should_union = layer_reaches_pins(circuit, wire_layer);
                 } else {
                     should_union = (poi[a].layer_slot == poi[b].layer_slot) ||
                                    via_bridges(circuit, poi[k].x, poi[k].y, poi[a].layer_slot, poi[b].layer_slot);
@@ -572,11 +592,12 @@ void circuit_rebuild_nets(Circuit *circuit) {
        wires itself, before either even reaches this function - see
        split_wires_containing_point/insert_wire_chain/auto_via_at_point
        above), never as a side effect of merely dragging an existing wire
-       across another one. Same outer-layer rule as the coincidence pass
-       above: a pin only taps into a wire on one of the two outer layers. */
+       across another one. Same rule as the coincidence pass above (see
+       layer_reaches_pins): a pin taps into a wire on one of the two outer
+       layers, or the GND/+5V plane. */
     for (int i = 0; i < circuit->wire_high_water; i++) {
         Wire *w = &circuit->wires[i];
-        if (!w->in_use || !layer_is_outer(circuit, w->layer_slot)) continue;
+        if (!w->in_use || !layer_reaches_pins(circuit, w->layer_slot)) continue;
         for (int m = 0; m < poi_count; m++) {
             if (poi[m].uf_idx >= MAX_GLOBAL_PINS) continue;
             if (point_on_segment_interior(poi[m].x, poi[m].y, w->from_x, w->from_y, w->to_x, w->to_y)) {

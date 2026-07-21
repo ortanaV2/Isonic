@@ -40,6 +40,37 @@ static void register_driver(int root, SignalValue val) {
     }
 }
 
+/* True if some via sitting exactly at (x,y) bridges to a GND or +5V-role
+   layer, writing the value that plane forces (LOW/HIGH) to *out_val. A via
+   only gates whether two wire endpoints AT THE SAME POINT get unioned into
+   one net (see circuit_rebuild_nets) - it has no identity of its own in the
+   union-find, so it can't be the thing gather_drivers registers a driver
+   on. This is what lets a wire on an ordinary routed layer, connected only
+   through a via to the plane (no wire of its own ever drawn ON the GND/+5V
+   layer at that exact point), still read the forced value - see
+   gather_drivers' own wire loop below. If a via somehow bridges both a
+   GND-role and a POWER-role layer at once (tying ground to power - already
+   nonsensical wiring the sim's own conflict detection would flag elsewhere
+   once something drives the opposing level), whichever role is found first
+   wins; not worth resolving more carefully. */
+static int via_forces_value(const Circuit *circuit, int x, int y, SignalValue *out_val) {
+    for (int i = 0; i < circuit->via_high_water; i++) {
+        const Via *v = &circuit->vias[i];
+        if (!v->in_use || v->x != x || v->y != y) continue;
+        LayerRole role_a = circuit->layers[v->layer_slot_a].role;
+        LayerRole role_b = circuit->layers[v->layer_slot_b].role;
+        if (role_a == LAYER_ROLE_GND || role_b == LAYER_ROLE_GND) {
+            *out_val = SIG_LOW;
+            return 1;
+        }
+        if (role_a == LAYER_ROLE_POWER || role_b == LAYER_ROLE_POWER) {
+            *out_val = SIG_HIGH;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void gather_drivers(Circuit *circuit) {
     memset(driver_present, 0, sizeof(driver_present));
     memset(driver_conflict, 0, sizeof(driver_conflict));
@@ -73,6 +104,17 @@ static void gather_drivers(Circuit *circuit) {
         } else if (role == LAYER_ROLE_POWER) {
             register_driver(wire_root_cache[wi], SIG_HIGH);
         }
+
+        /* a via at EITHER end bridging this wire's (ordinary-layer) endpoint
+           to the GND/+5V plane forces it too, even though this wire's own
+           layer isn't the plane layer itself - see via_forces_value's own
+           comment. Checked regardless of the role check just above (a wire
+           already on the plane just gets the same value registered twice,
+           harmless - same "redundant but harmless" precedent several
+           agreeing drivers already get elsewhere in this function). */
+        SignalValue via_val;
+        if (via_forces_value(circuit, w->from_x, w->from_y, &via_val)) register_driver(wire_root_cache[wi], via_val);
+        if (via_forces_value(circuit, w->to_x, w->to_y, &via_val)) register_driver(wire_root_cache[wi], via_val);
     }
 }
 
