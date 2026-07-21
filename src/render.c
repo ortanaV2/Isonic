@@ -276,7 +276,7 @@ typedef enum { EDGE_LEFT = 0, EDGE_BOTTOM = 1, EDGE_RIGHT = 2, EDGE_TOP = 3 } Bo
    point visible from the center without crossing another edge first) - true
    here since notch_radius_px is always small relative to the body's fixed
    width (see its own comment). */
-static void fill_ic_body_notched(SDL_Renderer *renderer, float sx, float sy, float w, float h, int notch_edge,
+static void fill_ic_body_notched(SDL_Renderer *renderer, float sx, float sy, float w, float h, BodyEdge notch_edge,
                                   float cell, SDL_Color col) {
     float radius = notch_radius_px(cell);
     float cx = sx + w * 0.5f, cy = sy + h * 0.5f;
