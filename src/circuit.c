@@ -195,22 +195,6 @@ static void prune_dangling_vias(Circuit *circuit) {
     }
 }
 
-/* If (px,py) coincides with, or lands mid-span on, any existing wire on a
-   DIFFERENT layer than layer_slot, bridges the two layers there with an
-   automatic via instead of silently merging the geometry the way a
-   same-layer touch does (see Via's doc comment in circuit.h). */
-static void auto_via_at_point(Circuit *circuit, int px, int py, int layer_slot) {
-    int hw = circuit->wire_high_water;
-    for (int i = 0; i < hw; i++) {
-        const Wire *w = &circuit->wires[i];
-        if (!w->in_use || w->layer_slot == layer_slot) continue;
-        int touches = (w->from_x == px && w->from_y == py) ||
-                      (w->to_x == px && w->to_y == py) ||
-                      point_on_segment_interior(px, py, w->from_x, w->from_y, w->to_x, w->to_y);
-        if (touches) add_via_raw(circuit, px, py, layer_slot, w->layer_slot);
-    }
-}
-
 /* Splits wire[wire_idx] into two independent wires at (px, py), which must lie
    strictly inside it. The original keeps its "from" end (and therefore its
    kind/terminal, see Wire's from_x/from_y comment) and simply gets shortened;
@@ -234,6 +218,31 @@ static void split_wire_slot(Circuit *circuit, int wire_idx, int px, int py) {
 
     w->to_x = px;
     w->to_y = py;
+}
+
+/* If (px,py) coincides with, or lands mid-span on, any existing wire on a
+   DIFFERENT layer than layer_slot, bridges the two layers there with an
+   automatic via instead of silently merging the geometry the way a
+   same-layer touch does (see Via's doc comment in circuit.h). A mid-span
+   touch also splits that existing wire in two at the point, same as
+   split_wires_containing_point below already does for a same-layer touch -
+   without this, a cross-layer via left the tapped wire as one long unbroken
+   run with an invisible junction buried somewhere along its middle, instead
+   of the two independently selectable/deletable segments a same-layer
+   junction always gets. An exact endpoint touch needs no split - the
+   existing wire already ends there, which is already a junction between two
+   distinct wire objects, nothing to cut in half. */
+static void auto_via_at_point(Circuit *circuit, int px, int py, int layer_slot) {
+    int hw = circuit->wire_high_water;
+    for (int i = 0; i < hw; i++) {
+        const Wire *w = &circuit->wires[i];
+        if (!w->in_use || w->layer_slot == layer_slot) continue;
+        int endpoint_touch = (w->from_x == px && w->from_y == py) || (w->to_x == px && w->to_y == py);
+        int mid_span_touch = point_on_segment_interior(px, py, w->from_x, w->from_y, w->to_x, w->to_y);
+        if (!endpoint_touch && !mid_span_touch) continue;
+        add_via_raw(circuit, px, py, layer_slot, w->layer_slot);
+        if (mid_span_touch) split_wire_slot(circuit, i, px, py);
+    }
 }
 
 /* Splits every existing wire ON THE SAME LAYER that (px, py) lands on the
@@ -267,12 +276,17 @@ static int compare_split_point(const void *pa, const void *pb) {
 /* Adds (from -> to) as one or more consecutive wire segments, pre-split at any
    point where an existing SAME-LAYER wire's endpoint lands on this new wire's
    interior - the mirror image of split_wires_containing_point above. A
-   different-layer existing endpoint landing on the new wire's path bridges
-   an automatic via there instead (see auto_via_at_point), rather than
-   splitting the new wire for it. Only the first segment carries kind/
-   input_value, since the terminal end never moves; every segment shares
-   layer_slot. Returns the id of the first segment, or -1 if none could be
-   allocated. */
+   different-layer existing endpoint merely passing under/over the new wire's
+   path (not at one of ITS OWN two endpoints - those are handled directly by
+   circuit_add_wire's own two auto_via_at_point calls, before this function
+   ever runs) creates neither a via nor a split here - two wires on different
+   layers crossing in the 2D view aren't electrically connected in reality
+   without a deliberate via there, so a long wire merely passing near/through
+   several unrelated other-layer nodes along its own length must stay one
+   intact run, not fracture into a segment (and a phantom via) at every node
+   it happens to cross. Only the first segment carries kind/input_value,
+   since the terminal end never moves; every segment shares layer_slot.
+   Returns the id of the first segment, or -1 if none could be allocated. */
 static int insert_wire_chain(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot) {
     static SplitPoint pts[MAX_WIRES * 2];
     int pt_count = 0;
@@ -280,15 +294,11 @@ static int insert_wire_chain(Circuit *circuit, int from_x, int from_y, int to_x,
 
     for (int i = 0; i < circuit->wire_high_water; i++) {
         const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
+        if (!w->in_use || w->layer_slot != layer_slot) continue;
         int ex[2] = { w->from_x, w->to_x };
         int ey[2] = { w->from_y, w->to_y };
         for (int e = 0; e < 2; e++) {
             if (!point_on_segment_interior(ex[e], ey[e], from_x, from_y, to_x, to_y)) continue;
-            if (w->layer_slot != layer_slot) {
-                auto_via_at_point(circuit, ex[e], ey[e], layer_slot);
-                continue;
-            }
             int dup = 0;
             for (int k = 0; k < pt_count; k++) {
                 if (pts[k].x == ex[e] && pts[k].y == ey[e]) { dup = 1; break; }
@@ -348,6 +358,40 @@ void circuit_remove_component(Circuit *circuit, int component_id) {
     circuit_rebuild_nets(circuit);
 }
 
+/* Adds a wire exactly as given - no splitting of anything, no auto-via
+   inference, no net rebuild. Used by schematic_load, which restores an
+   already fully-resolved wire list: whatever splitting/auto-via the user's
+   original interactive drawing session produced is already baked into the
+   file as its own separate wire/via record, so re-running circuit_add_wire's
+   "smart" heuristics while replaying those records back in is both
+   redundant and actively wrong - a wire whose saved endpoint simply happens
+   to fall near/on some unrelated other wire's midpoint (pure geometric
+   coincidence in the final layout, not something the user actually drew
+   that way) would otherwise get an unwanted extra via and split conjured up
+   purely as an artifact of load order, never present in what was saved.
+   Loading should reproduce the file verbatim, not reinterpret it. Doesn't
+   rebuild nets itself - the caller does that once, after every component/
+   wire/via has been restored, same as circuit_add_via's own raw counterpart
+   below. Returns the new wire's id, or -1 if the table is full or
+   from == to. */
+int circuit_add_wire_raw(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot) {
+    if (from_x == to_x && from_y == to_y) return -1;
+    int idx = find_free_wire_slot(circuit);
+    if (idx < 0) return -1;
+    Wire *w = &circuit->wires[idx];
+    w->in_use = 1;
+    w->from_x = from_x;
+    w->from_y = from_y;
+    w->to_x = to_x;
+    w->to_y = to_y;
+    w->selected = 0;
+    w->kind = kind;
+    w->input_value = 0;
+    w->layer_slot = layer_slot;
+    if (idx + 1 > circuit->wire_high_water) circuit->wire_high_water = idx + 1;
+    return idx;
+}
+
 int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot) {
     if (from_x == to_x && from_y == to_y) return -1;
 
@@ -362,8 +406,9 @@ int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_
     auto_via_at_point(circuit, to_x, to_y, layer_slot);
 
     /* Mirror image: pre-split the new wire itself at any existing same-layer
-       endpoint that falls on its interior (insert_wire_chain also handles
-       the different-layer auto-via case for its own interior touches). */
+       endpoint that falls on its interior - a different-layer existing
+       endpoint merely crossing the new wire's own interior is deliberately
+       left alone here (see insert_wire_chain's own comment). */
     int first_idx = insert_wire_chain(circuit, from_x, from_y, to_x, to_y, kind, layer_slot);
 
     circuit_rebuild_nets(circuit);
@@ -378,6 +423,16 @@ void circuit_remove_wire(Circuit *circuit, int wire_id) {
        by prune_dangling_vias inside the rebuild below - not handled here
        anymore, so every edit path gets the same cleanup, see its comment */
     circuit_rebuild_nets(circuit);
+}
+
+/* Adds a via exactly as given - no net rebuild, same "restoring a file's own
+   already-resolved records verbatim, not reinterpreting them" reasoning as
+   circuit_add_wire_raw above. Still de-dupes against an existing via
+   bridging the same exact pair at the same point (add_via_raw's own
+   check) - two identical via records genuinely would be redundant, unlike
+   the wire-splitting case, so this isn't skipped here. */
+int circuit_add_via_raw(Circuit *circuit, int x, int y, int layer_slot_a, int layer_slot_b) {
+    return add_via_raw(circuit, x, y, layer_slot_a, layer_slot_b);
 }
 
 int circuit_add_via(Circuit *circuit, int x, int y, int layer_slot_a, int layer_slot_b) {

@@ -348,7 +348,12 @@ int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
                 }
             }
             if (layer < 0 || layer >= MAX_LAYERS || !circuit->layers[layer].in_use) layer = circuit->layer_order[0];
-            int wid = circuit_add_wire(circuit, fx, fy, tx, ty, kind, layer);
+            /* _raw - restoring exactly what was saved, not re-running the
+               interactive-drawing splitting/auto-via heuristics over an
+               already fully-resolved wire list (see its own comment in
+               circuit.c) - circuit_rebuild_nets at the end of this whole
+               load handles connectivity once, for everything at once. */
+            int wid = circuit_add_wire_raw(circuit, fx, fy, tx, ty, kind, layer);
             if (wid >= 0) circuit->wires[wid].input_value = input_value;
 
         } else if (strcmp(keyword, "via") == 0) {
@@ -364,7 +369,7 @@ int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
                     if (kv_parse_int_list(val, p, 2) == 2) { la = p[0]; lb = p[1]; }
                 }
             }
-            circuit_add_via(circuit, x, y, la, lb);
+            circuit_add_via_raw(circuit, x, y, la, lb);
 
         } else if (strcmp(keyword, "section") == 0) {
             int x0 = 0, y0 = 0, x1 = 0, y1 = 0, locked = 0;

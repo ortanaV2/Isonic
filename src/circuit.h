@@ -179,12 +179,19 @@ void circuit_remove_component(Circuit *circuit, int component_id);
    triggers an automatic via there bridging the two layers (see Via above),
    never a silent geometric merge. */
 int circuit_add_wire(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot);
+/* No splitting/auto-via inference, no rebuild - for schematic_load, which
+   restores an already fully-resolved wire list verbatim rather than
+   replaying it through the interactive-drawing heuristics above. See its
+   own comment in circuit.c. */
+int circuit_add_wire_raw(Circuit *circuit, int from_x, int from_y, int to_x, int to_y, WireKind kind, int layer_slot);
 void circuit_remove_wire(Circuit *circuit, int wire_id);
 
 /* Adds a via bridging layer_slot_a/b at (x,y) - no-ops (returns -1) if one
    already bridges that exact pair there, so circuit_add_wire's auto-via
    creation can call this unconditionally without double-placing. */
 int circuit_add_via(Circuit *circuit, int x, int y, int layer_slot_a, int layer_slot_b);
+/* No rebuild - same schematic_load use case as circuit_add_wire_raw above. */
+int circuit_add_via_raw(Circuit *circuit, int x, int y, int layer_slot_a, int layer_slot_b);
 void circuit_remove_via(Circuit *circuit, int via_id);
 int circuit_find_via_at(const Circuit *circuit, int x, int y);
 
