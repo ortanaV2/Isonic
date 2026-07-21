@@ -6,13 +6,14 @@
 #include "platform_win32.h"
 
 static const char *k_action_labels[KEYBIND_ACTION_COUNT] = {
-    "Wire Tool", "Via Tool", "Select Tool", "Input Tool", "Output Tool", "Copy", "Paste", "Undo", "Redo", "Rotate", "Save",
+    "Select Tool", "Wire Tool", "Via Tool", "Input Tool", "Output Tool", "Text Label Tool",
+    "Copy", "Paste", "Undo", "Redo", "Rotate", "Save",
 };
 
 /* File key for each action, in the same order as KeybindAction - shared by
    settings_load/settings_save so the two stay in lockstep by construction. */
 static const char *k_action_keys[KEYBIND_ACTION_COUNT] = {
-    "keybind_wire", "keybind_via", "keybind_select", "keybind_input", "keybind_output",
+    "keybind_select", "keybind_wire", "keybind_via", "keybind_input", "keybind_output", "keybind_text_label",
     "keybind_copy", "keybind_paste", "keybind_undo", "keybind_redo", "keybind_rotate", "keybind_save",
 };
 
@@ -26,15 +27,16 @@ void settings_defaults(Settings *settings) {
     settings->layer_panel_anchor_left = 0;
     settings->diag_chips_enabled = 1;
     settings->diag_hover_enabled = 1;
+    settings->keybind[KEYBIND_SELECT] = SDL_SCANCODE_SPACE;
     settings->keybind[KEYBIND_WIRE] = SDL_SCANCODE_W;
     /* was V - collided with Ctrl+V once Paste got its own keybind below
        (the plain-key checks never excluded Ctrl, so Ctrl+V would also
        switch to the Via tool as a side effect - see input_handler.c's
        Ctrl-guards on every plain tool-switch key, added at the same time). */
     settings->keybind[KEYBIND_VIA] = SDL_SCANCODE_F;
-    settings->keybind[KEYBIND_SELECT] = SDL_SCANCODE_SPACE;
     settings->keybind[KEYBIND_INPUT] = SDL_SCANCODE_Q;
     settings->keybind[KEYBIND_OUTPUT] = SDL_SCANCODE_E;
+    settings->keybind[KEYBIND_TEXT_LABEL] = SDL_SCANCODE_T;
     settings->keybind[KEYBIND_COPY] = SDL_SCANCODE_C;
     settings->keybind[KEYBIND_PASTE] = SDL_SCANCODE_V;
     settings->keybind[KEYBIND_UNDO] = SDL_SCANCODE_Z;

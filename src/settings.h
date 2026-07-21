@@ -8,12 +8,18 @@
    layer-select keys (inherently positional), Delete/Backspace/Escape
    (universal), and the Shift/Ctrl+Shift layer-preview-lock chord (a
    modifier chord, not a single rebindable key). */
+/* Ordered to match the Settings popup's listing: tool-switch keys first (in
+   the same left-to-right order as their taskbar buttons), then edit actions,
+   then Save last. Purely a display/iteration order - each entry is still
+   saved under its own named key (see k_action_keys in settings.c), so
+   reordering this enum never breaks an existing settings.ini. */
 typedef enum {
+    KEYBIND_SELECT,
     KEYBIND_WIRE,
     KEYBIND_VIA,
-    KEYBIND_SELECT,
     KEYBIND_INPUT,
     KEYBIND_OUTPUT,
+    KEYBIND_TEXT_LABEL,
     KEYBIND_COPY,
     KEYBIND_PASTE,
     KEYBIND_UNDO,
@@ -38,7 +44,7 @@ typedef struct {
 const char *keybind_action_label(KeybindAction action);
 
 /* Today's hardcoded scancodes (W/F/Space/Q/E/Ctrl+C/Ctrl+V/Ctrl+Z/Ctrl+Y/R/
-   Ctrl+S), autosave off, Layers panel on the right - a user who never opens
+   Ctrl+S/T), autosave off, Layers panel on the right - a user who never opens
    Settings sees zero behavior change from before this feature existed. */
 void settings_defaults(Settings *settings);
 

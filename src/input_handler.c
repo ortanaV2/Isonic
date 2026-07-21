@@ -1866,6 +1866,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 set_active_tool(app, TOOL_INPUT);
             } else if (sc == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_OUTPUT);
+            } else if (sc == app->settings.keybind[KEYBIND_TEXT_LABEL] && no_ctrl) {
+                set_active_tool(app, TOOL_TEXT_LABEL);
             } else if (sc == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
                 /* only meaningful while a placement (Components-menu pick or
                    Ctrl+C paste) is actually pending - see place_rotation in
