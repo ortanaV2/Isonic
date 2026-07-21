@@ -376,6 +376,13 @@ static void handle_via_tool_click(App *app, float fx, float fy) {
     if (new_id >= 0) push_undo(app);
 }
 
+/* forward-declared - its own definition sits down among the other
+   Section/Text-Label hit-test helpers, well after this function, and this
+   is the one place in the file that needs it ahead of that (every other
+   caller already sits below the real definition, in the usual
+   define-before-use order this file otherwise relies on throughout). */
+static int find_text_label_at(App *app, int mx, int my);
+
 static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
     /* vias sit at exact grid vertices, same lattice-point matching pins
        use - checked first since a via is the most precise target that
@@ -405,6 +412,27 @@ static void handle_right_click(App *app, int mx, int my, float fx, float fy) {
     if (wire_id >= 0) {
         if (wire_id == app->selected_wire_id) app->selected_wire_id = -1;
         circuit_remove_wire(&app->circuit, wire_id);
+        push_undo(app);
+        return;
+    }
+
+    /* Section-Labeling/Text Label: same right-click-to-delete every other
+       element gets. A section's outline/corners only (its filled interior
+       stays click-through, see circuit_find_section_at) and only while
+       unlocked - a locked section is fully protected against delete, same
+       as delete_selection's own identical exclusion (see circuit.h's
+       Section comment - locking means "leave this alone"). */
+    int section_id = circuit_find_section_at(&app->circuit, fx, fy, app_wire_hit_tolerance(app));
+    if (section_id >= 0 && !app->circuit.sections[section_id].locked) {
+        if (section_id == app->selected_section_id) app->selected_section_id = -1;
+        circuit_remove_section(&app->circuit, section_id);
+        push_undo(app);
+        return;
+    }
+    int text_label_id = find_text_label_at(app, mx, my);
+    if (text_label_id >= 0) {
+        if (text_label_id == app->selected_text_label_id) app->selected_text_label_id = -1;
+        circuit_remove_text_label(&app->circuit, text_label_id);
         push_undo(app);
     }
 }
@@ -1204,6 +1232,14 @@ static void commit_paste(App *app, int gx, int gy) {
         if (id >= 0) app->circuit.text_labels[id].selected = 1;
     }
     app->pasting = 0;
+    /* rebuild once, up front, so a paste that dropped components straight
+       onto existing wires connects immediately - circuit_add_ic doesn't
+       rebuild on its own (see the place branch's own comment), and while the
+       circuit_add_wire calls above each rebuild, a paste of components only
+       (no wires) would otherwise leave the just-placed pins unconnected and
+       reading as floating until the next unrelated edit. Harmless when a
+       wire paste already rebuilt last - it's the same idempotent recompute. */
+    circuit_rebuild_nets(&app->circuit);
     /* -1 (ambiguous) unless exactly one thing above actually landed - same
        "point at the sole survivor, else -1" rule Ctrl+click toggling
        already established, see its own comment */
@@ -1240,6 +1276,16 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
             int new_id = circuit_add_ic(&app->circuit, gx, gy, place_def);
             if (new_id >= 0) {
                 app->circuit.components[new_id].rotation = app->place_rotation;
+                /* circuit_add_ic deliberately does NOT rebuild nets itself
+                   (rotation is only set here, after it returns, and pin world
+                   positions depend on it - a rebuild inside add_ic would wire
+                   up the unrotated pin positions), so the caller rebuilds once
+                   the component is fully set up. Without this, a component
+                   dropped straight onto existing wire endpoints/taps wouldn't
+                   electrically connect until some later edit happened to
+                   rebuild - and its input pins would read as floating in the
+                   meantime (see diagnostics.c's net-based floating check). */
+                circuit_rebuild_nets(&app->circuit);
                 select_component(app, new_id);
                 push_undo(app);
             }

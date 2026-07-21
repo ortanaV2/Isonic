@@ -116,17 +116,62 @@ static int point_on_segment_interior(int px, int py, int ax, int ay, int bx, int
     return dot < len2;
 }
 
-/* True if any in-use wire touches (px,py) at all - an endpoint, or merely
-   passing through mid-span - used to tell whether a via still has anything
-   left to bridge there (see circuit_remove_wire). */
-static int point_touches_any_wire(const Circuit *circuit, int px, int py) {
+/* True if some in-use wire ON layer_slot touches (px,py) - an endpoint, or
+   merely passing through mid-span. The per-layer half of prune_dangling_vias'
+   "is this via still bridging real copper on both sides" test. */
+static int point_has_wire_on_layer(const Circuit *circuit, int px, int py, int layer_slot) {
     for (int i = 0; i < circuit->wire_high_water; i++) {
         const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
+        if (!w->in_use || w->layer_slot != layer_slot) continue;
         if ((w->from_x == px && w->from_y == py) || (w->to_x == px && w->to_y == py)) return 1;
         if (point_on_segment_interior(px, py, w->from_x, w->from_y, w->to_x, w->to_y)) return 1;
     }
     return 0;
+}
+
+/* Drops every via that no longer bridges anything AT ALL - neither of its
+   two layers has a wire touching its point anymore. A via with nothing left
+   on either side is fully orphaned (no different from a via at a point
+   nobody ever routed anything through) and just renders as a phantom
+   "junction" ring at what's no longer even one real trace, let alone a
+   crossing.
+
+   Deliberately an OR, not an AND: pruning as soon as just ONE of the two
+   layers loses its wire would also delete a via the instant it's placed -
+   the Via tool bridges an existing wire's layer to whatever layer is
+   currently active (see handle_via_tool_click in input_handler.c), which
+   typically has NO wire there yet - that's the whole point, you place the
+   via and THEN route the second layer to it. circuit_add_via's own
+   rebuild-nets call would hit this same prune pass immediately, so
+   requiring both sides up front would make every via vanish in the same
+   click that created it. Requiring the LOSS of both instead only fires once
+   the wire that originally justified the via, and whatever (if anything)
+   was ever routed on the other layer, are BOTH gone - the "I deleted
+   everything and a ring is still there" case this exists for - while a via
+   sitting on just one real wire (freshly placed, or with its other side
+   deleted while this one still routes somewhere) is left alone, same as the
+   Via tool's own intended in-between state.
+
+   Still a real improvement over the plain "does ANY wire on ANY layer touch
+   this point" check this replaces (which used to live only in
+   circuit_remove_wire): that older check could keep a via alive forever if
+   some unrelated third wire on a layer the via doesn't even bridge happened
+   to cross the same point, since it didn't care which layer the touching
+   wire was on. This checks only the via's own two layer_slots.
+
+   Run at the top of circuit_rebuild_nets (below) rather than only from
+   circuit_remove_wire, so ANY edit that leaves a via fully orphaned - a
+   wire-node drag that pulls the last wire away from the point works just as
+   well as an explicit delete - cleans it up, not just that one path. */
+static void prune_dangling_vias(Circuit *circuit) {
+    for (int i = 0; i < circuit->via_high_water; i++) {
+        Via *v = &circuit->vias[i];
+        if (!v->in_use) continue;
+        if (!point_has_wire_on_layer(circuit, v->x, v->y, v->layer_slot_a) &&
+            !point_has_wire_on_layer(circuit, v->x, v->y, v->layer_slot_b)) {
+            v->in_use = 0;
+        }
+    }
 }
 
 /* If (px,py) coincides with, or lands mid-span on, any existing wire on a
@@ -308,16 +353,9 @@ void circuit_remove_wire(Circuit *circuit, int wire_id) {
     if (wire_id < 0 || wire_id >= MAX_WIRES) return;
     if (!circuit->wires[wire_id].in_use) return;
     circuit->wires[wire_id].in_use = 0;
-    /* a via with nothing left touching its point - no wire endpoint, and no
-       wire merely passing through mid-span either - has nothing left to
-       bridge, so it goes with the wire, same as a via getting desoldered
-       once the last trace touching it is removed */
-    for (int i = 0; i < circuit->via_high_water; i++) {
-        Via *v = &circuit->vias[i];
-        if (v->in_use && !point_touches_any_wire(circuit, v->x, v->y)) {
-            v->in_use = 0;
-        }
-    }
+    /* any via left one-sided (or fully orphaned) by this removal is dropped
+       by prune_dangling_vias inside the rebuild below - not handled here
+       anymore, so every edit path gets the same cleanup, see its comment */
     circuit_rebuild_nets(circuit);
 }
 
@@ -430,6 +468,11 @@ static void add_junction(Circuit *circuit, int x, int y) {
 }
 
 void circuit_rebuild_nets(Circuit *circuit) {
+    /* first, so via_bridges below never sees a via that no longer reaches
+       copper on both its layers (which would otherwise keep unioning two
+       nets together long after the crossing that justified it was deleted) */
+    prune_dangling_vias(circuit);
+
     for (int i = 0; i < TOTAL_POINTS; i++) circuit->pin_net[i] = i;
     circuit->junction_count = 0;
 

@@ -74,8 +74,29 @@ int schematic_save(const Circuit *circuit, const Camera *camera, const char *pat
 
         char seq_hex[IC_SEQ_STATE_BYTES * 2 + 1];
         kv_hex_encode(c->seq_state, IC_SEQ_STATE_BYTES, seq_hex);
-        snprintf(line, sizeof(line), "component ic=%s x=%d y=%d rot=%d seq=%s",
-                 c->ic_def->name, c->grid_x, c->grid_y, c->rotation, seq_hex);
+
+        /* Every pin's last-resolved SignalValue, not just seq_state - an IC
+           like TC74HC373APF (the D-Latch) has no clock_edge and never
+           touches its own seq_state at all; its "hold while LE is low"
+           behavior instead works purely by reading back its own OUTPUT
+           pins' current value on the next eval() call (see tc74hc373.c's
+           own comment on this). Without saving that value too, every latch
+           forgets whatever it was holding the instant the file is
+           reloaded - component_init_ic zeroes every pin's value, so the
+           very first eval() after load would read SIG_LOW (0) as "the held
+           value" regardless of what was actually latched before saving.
+           Saving all pins (not just outputs) costs nothing and covers any
+           future IC built the same way, not just this one - fits in a
+           nibble (SignalValue's largest value is 4) but hex-encoded a full
+           byte at a time via kv_hex_encode, same convention seq already
+           uses, rather than a bespoke nibble packer for a few bytes' saving. */
+        unsigned char pin_vals[MAX_PINS_PER_COMPONENT];
+        for (int pi = 0; pi < c->pin_count; pi++) pin_vals[pi] = (unsigned char)c->pins[pi].value;
+        char pinval_hex[MAX_PINS_PER_COMPONENT * 2 + 1];
+        kv_hex_encode(pin_vals, (size_t)c->pin_count, pinval_hex);
+
+        snprintf(line, sizeof(line), "component ic=%s x=%d y=%d rot=%d seq=%s pinval=%s",
+                 c->ic_def->name, c->grid_x, c->grid_y, c->rotation, seq_hex, pinval_hex);
         kv_write_line(f, line);
 
         if (ic_at28c64b_is(c)) {
@@ -223,11 +244,18 @@ int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
             }
 
         } else if (strcmp(keyword, "component") == 0) {
-            char tok[64], key[32], val[64];
+            /* tok/val sized past "pinval=" + a full MAX_PINS_PER_COMPONENT-
+               pin hex string (up to 7 + 28*2 = 63 chars) with headroom, not
+               the 64-byte default every other field's token uses - that
+               would fit exactly at the maximum pin count with zero margin. */
+            char tok[96], key[32], val[80];
             char ic_name[64] = "";
             int x = 0, y = 0, rot = 0;
             unsigned char seq[IC_SEQ_STATE_BYTES];
             memset(seq, 0, sizeof(seq));
+            unsigned char pin_vals[MAX_PINS_PER_COMPONENT];
+            memset(pin_vals, 0, sizeof(pin_vals));
+            int have_pin_vals = 0;
             while (kv_next_token(&cursor, tok, sizeof(tok))) {
                 if (!kv_split_kv(tok, key, sizeof(key), val, sizeof(val))) continue;
                 if (strcmp(key, "ic") == 0) {
@@ -240,6 +268,17 @@ int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
                    0, the same "natural" orientation those files always meant */
                 else if (strcmp(key, "rot") == 0) rot = atoi(val);
                 else if (strcmp(key, "seq") == 0) kv_hex_decode(val, seq, IC_SEQ_STATE_BYTES);
+                else if (strcmp(key, "pinval") == 0) {
+                    /* absent on a file saved before this existed - pin_vals
+                       stays all-zero (SIG_LOW), same "natural" fallback rot
+                       uses above; byte count comes from the hex string's own
+                       length, not a pin count we don't know yet (def isn't
+                       resolved until after this loop) - clamped to the
+                       largest this component could ever have. */
+                    size_t n = strlen(val) / 2;
+                    if (n > MAX_PINS_PER_COMPONENT) n = MAX_PINS_PER_COMPONENT;
+                    if (kv_hex_decode(val, pin_vals, n)) have_pin_vals = 1;
+                }
             }
 
             last_component_id = -1;
@@ -253,6 +292,18 @@ int schematic_load(Circuit *circuit, Camera *camera, const char *path) {
                 Component *c = &circuit->components[id];
                 c->rotation = rot & 3;
                 memcpy(c->seq_state, seq, IC_SEQ_STATE_BYTES);
+                /* restores whatever each pin last resolved to (an IC like
+                   the D-Latch has no clock_edge and relies purely on
+                   reading back its own output pins to "hold" - see the
+                   pinval field's own comment in schematic_save above);
+                   bounded by this component's REAL pin_count, not whatever
+                   the file's hex string happened to encode, in case the IC's
+                   own pinout ever changes between save and load. */
+                if (have_pin_vals) {
+                    for (int pi = 0; pi < c->pin_count; pi++) {
+                        c->pins[pi].value = (SignalValue)pin_vals[pi];
+                    }
+                }
                 if (ic_at28c64b_is(c)) {
                     /* The AT28C64B memory pool is a process-lifetime global -
                        a slot number saved by a previous process is

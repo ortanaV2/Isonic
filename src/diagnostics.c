@@ -19,6 +19,12 @@ typedef struct {
     int root;
     int wire_ids[NET_MAX_WIRES];
     int wire_count;
+    /* every pin sharing this net, regardless of direction or drive state
+       (power pins and tri-stated outputs included) - purely topological, so
+       the floating-input check can ask "is this pin physically alone on its
+       net" without depending on live signal values, unlike out_pin_count
+       below which deliberately excludes tri-stated (SIG_HIZ) outputs. */
+    int pin_total;
     /* driving PIN_OUTPUT pins (value != SIG_HIZ - a tri-stated output isn't
        really driving anything right now, same rule sim.c's gather_drivers uses) */
     struct { int component_id, pin_index; } out_pins[NET_MAX_DRIVERS];
@@ -49,6 +55,15 @@ static NetInfo *find_or_add_net(int root) {
     return n;
 }
 
+/* Read-only lookup - NULL if that root has no recorded net (e.g. it
+   overflowed NET_MAX during collect_nets). */
+static NetInfo *find_net(int root) {
+    for (int i = 0; i < g_net_count; i++) {
+        if (g_nets[i].root == root) return &g_nets[i];
+    }
+    return NULL;
+}
+
 static void collect_nets(Circuit *circuit) {
     g_net_count = 0;
 
@@ -67,9 +82,13 @@ static void collect_nets(Circuit *circuit) {
         if (!c->in_use) continue;
         for (int pi = 0; pi < c->pin_count; pi++) {
             Pin *p = &c->pins[pi];
-            if (p->direction == PIN_POWER) continue;
             NetInfo *n = find_or_add_net(circuit_pin_net_root(circuit, ci, pi));
             if (n == NULL) continue;
+            /* pin_total counts EVERY pin on the net (power/HiZ included), for
+               the floating check - done before the PIN_POWER skip below,
+               which only governs driver/load bookkeeping, not net membership */
+            n->pin_total++;
+            if (p->direction == PIN_POWER) continue;
             if (p->value == SIG_CONFLICT) n->has_conflict = 1;
             if (p->direction == PIN_OUTPUT) {
                 if (p->value != SIG_HIZ && n->out_pin_count < NET_MAX_DRIVERS) {
@@ -175,12 +194,21 @@ static void check_floating_pins(Circuit *circuit, DiagnosticSet *out) {
             Pin *p = &c->pins[pi];
             if (p->direction != PIN_INPUT || p->decorative) continue;
 
-            int x, y;
-            component_pin_world_pos(c, pi, &x, &y);
-            /* circuit_point_connection_count includes this pin itself, so a
-               genuinely floating pin (nothing else at all touching it) reads
-               exactly 1 - see its own doc comment in circuit.h */
-            if (circuit_point_connection_count(circuit, x, y) != 1) continue;
+            /* floating == physically alone on its own net: nothing else
+               shares it (pin_total counts only this pin) and no wire is on
+               it. Using net membership, not exact-point geometry, is what
+               makes this respect the same connectivity rules
+               circuit_rebuild_nets used: a pin tapped by a wire passing
+               through mid-span (a bus line grazing a row of pins - see the
+               mid-span pass in circuit_rebuild_nets), or connected across a
+               chain of split wire segments, shares that wire's net and is
+               correctly NOT floating, even though no wire ENDPOINT sits
+               exactly on it (which the old circuit_point_connection_count
+               test missed, flagging such pins as floating by mistake). It
+               also correctly DOES flag a pin sitting only on an inner-layer
+               wire, which never reaches a through-hole pin. */
+            NetInfo *n = find_net(circuit_pin_net_root(circuit, ci, pi));
+            if (n == NULL || n->wire_count > 0 || n->pin_total > 1) continue;
 
             if (d == NULL) {
                 d = &out->items[out->count++];
