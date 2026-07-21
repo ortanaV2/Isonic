@@ -27,7 +27,7 @@ tool.
 
 </details>
 
-<img width="1279" height="829" alt="image" src="https://github.com/user-attachments/assets/8266a950-e846-4821-8b30-f254b78ee574" />
+<img width="1857" height="1080" alt="image" src="https://github.com/user-attachments/assets/cbd23dda-2d16-42a3-86bf-1dd6faae3e36" />
 
 ## Features
 
