@@ -33,6 +33,7 @@ static const char *k_category_labels[MENU_CAT_COUNT] = {
     "Counters",
     "Timers",
     "Memory",
+    "Arithmetic",
 };
 
 typedef struct {
@@ -61,6 +62,7 @@ static const MenuItem k_menu_items[] = {
     { MENU_CAT_COUNTERS, "12-Bit Binary Counter (SN74HC4040N)", "SN74HC4040N" },
     { MENU_CAT_TIMERS, "Timer (TLC555)", "TLC555" },
     { MENU_CAT_MEMORY, "8K x 8 EEPROM (AT28C64B-15PU)", "AT28C64B-15PU" },
+    { MENU_CAT_ARITHMETIC, "4-Bit Adder (CD74HC283E)", "CD74HC283E" },
 };
 #define MENU_ITEM_COUNT ((int)(sizeof(k_menu_items) / sizeof(k_menu_items[0])))
 

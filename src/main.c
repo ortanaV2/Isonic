@@ -12,6 +12,7 @@
 #include "ics/at28c64b.h"
 #include "ics/cd4555.h"
 #include "ics/cd74hc04.h"
+#include "ics/cd74hc283.h"
 #include "ics/cd74hct238.h"
 #include "ics/sn74hc00.h"
 #include "ics/sn74hc02.h"
@@ -196,6 +197,7 @@ int main(int argc, char **argv) {
     ic_at28c64b_register();
     ic_cd4555_register();
     ic_cd74hc04_register();
+    ic_cd74hc283_register();
     ic_cd74hct238_register();
     ic_sn74hc00_register();
     ic_sn74hc02_register();
