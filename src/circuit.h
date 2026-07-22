@@ -4,9 +4,19 @@
 #include "component.h"
 #include "ic_registry.h"
 
-#define MAX_COMPONENTS 256
-#define MAX_WIRES 512
-#define MAX_JUNCTIONS 1024
+/* Sized for a real multi-hundred-gate design (e.g. a discrete-logic CPU),
+   not just a handful of demo gates - these used to be 256/512/1024, which a
+   design at that scale blows through easily. Circuit (and anything that
+   mirrors its capacity 1:1, e.g. app.h's CLIPBOARD_MAX_* or a per-net
+   diagnostic list) is sized directly off these three constants specifically
+   so raising them here is enough on its own - no other file hardcodes a
+   smaller number of its own. Circuit itself is correspondingly larger now
+   (well over 1MB) - see main.c's `static App app` and undo.c's g_stack for
+   why every place that holds a whole Circuit by value is static/global
+   storage, never a plain stack local. */
+#define MAX_COMPONENTS 2048
+#define MAX_WIRES 4096
+#define MAX_JUNCTIONS 8192
 
 #define MAX_GLOBAL_PINS (MAX_COMPONENTS * MAX_PINS_PER_COMPONENT)
 #define GLOBAL_PIN_ID(component_id, pin_index) ((component_id) * MAX_PINS_PER_COMPONENT + (pin_index))
@@ -55,7 +65,7 @@ typedef enum { LAYER_ROLE_NORMAL, LAYER_ROLE_GND, LAYER_ROLE_POWER } LayerRole;
    routing layer (see input_handler.c) - one keypress always maps to
    exactly one digit. */
 #define MAX_LAYERS 9
-#define MAX_VIAS 512 /* same scale as MAX_WIRES */
+#define MAX_VIAS 4096 /* same scale as MAX_WIRES */
 
 typedef struct {
     int in_use;
@@ -81,11 +91,13 @@ typedef struct {
     int layer_slot_a, layer_slot_b;
 } Via;
 
-/* 32/64 - schematic annotations, not electrical structure, so there's no
-   reason for these to scale with MAX_COMPONENTS/MAX_WIRES the way vias do;
-   plenty of headroom for organizing even a large schematic into sections. */
-#define MAX_SECTIONS 32
-#define MAX_TEXT_LABELS 64
+/* Schematic annotations, not electrical structure, so there's no hard reason
+   for these to scale exactly with MAX_COMPONENTS/MAX_WIRES the way vias do -
+   bumped by the same factor anyway (were 32/64) since a schematic big enough
+   to need MAX_COMPONENTS/MAX_WIRES's new headroom (e.g. a CPU organized into
+   many functional-block Sections) plausibly wants more of these too. */
+#define MAX_SECTIONS 256
+#define MAX_TEXT_LABELS 512
 #define SECTION_LABEL_MAX_LEN 32
 #define TEXT_LABEL_MAX_LEN 48
 /* Smallest a section's rectangle may ever be (grid cells, both axes) - keeps

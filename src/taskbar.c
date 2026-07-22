@@ -18,6 +18,7 @@ static const char *k_file_menu_labels[FILE_MENU_COUNT] = {
     "New Schematic",
     "New Window",
     "Open File...",
+    "Import Schematic...",
     "Save",
     "Save As...",
     "Close Window",

@@ -29,8 +29,12 @@
    easy to trigger by pasting then dragging a whole multi-component
    circuit (see input_handler.c's commit_paste) even though nothing was
    wrong with the paste itself. Bumped well past any realistic circuit's
-   scale - the memory cost of six more int arrays this size is trivial. */
-#define MAX_DRAG_ATTACHMENTS 1024
+   scale - the memory cost of six more int arrays this size is trivial.
+   Bumped again (1024 -> 8192) alongside circuit.h's own MAX_COMPONENTS/
+   MAX_WIRES increase - a "select all, then drag" on a schematic actually
+   using that new headroom (hundreds of ICs) can need thousands of anchors
+   at once, not just "a handful of ICs" worth. */
+#define MAX_DRAG_ATTACHMENTS 8192
 /* Plain constant rather than pulling <windows.h>'s MAX_PATH into this
    shared header - only platform_win32.c ever needs the real Windows
    definition, everything else just needs "big enough for a path". */
@@ -91,9 +95,19 @@ typedef enum {
    paste time) - falling back to the active layer (wire) or being dropped
    entirely (via, if either side's layer no longer exists) only in the rare
    case that layer was since removed - see commit_paste. */
-#define CLIPBOARD_MAX_COMPONENTS 64
-#define CLIPBOARD_MAX_WIRES 128
-#define CLIPBOARD_MAX_VIAS CLIPBOARD_MAX_WIRES
+/* Matches the underlying Circuit's own capacity exactly (same pattern
+   CLIPBOARD_MAX_SECTIONS/CLIPBOARD_MAX_TEXT_LABELS already used) rather than
+   some smaller "realistic selection" guess - a plain Ctrl+C only ever holds
+   as much as is currently selected, but File > Import Schematic (see
+   import_schematic in input_handler.c) stages an ENTIRE other file's
+   component/wire/via lists in here at once, which can be as large as the
+   circuit format itself allows. A smaller cap silently truncated whichever
+   items didn't fit, with no warning - components/wires/vias past the cap
+   just vanished, worst on a big multi-layer import (used to be 64/128/128
+   here vs. the circuit's real 256/512/512). */
+#define CLIPBOARD_MAX_COMPONENTS MAX_COMPONENTS
+#define CLIPBOARD_MAX_WIRES MAX_WIRES
+#define CLIPBOARD_MAX_VIAS MAX_VIAS
 #define CLIPBOARD_MAX_SECTIONS MAX_SECTIONS
 #define CLIPBOARD_MAX_TEXT_LABELS MAX_TEXT_LABELS
 

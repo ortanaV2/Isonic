@@ -7,13 +7,19 @@
    IC in the catalog is from a comparable-drive-strength family. */
 #define DIAG_FAN_OUT_THRESHOLD 10
 
-/* Per-net scratch bookkeeping, rebuilt fresh every call - circuits here are
-   small (at most a few hundred wires/pins), so a simple linear-scan net
-   table redone every frame is plenty fast; no need to cache it across frames. */
-#define NET_MAX 1024
-#define NET_MAX_WIRES 64
-#define NET_MAX_DRIVERS 32
-#define NET_MAX_LOADS 256
+/* Per-net scratch bookkeeping, rebuilt fresh every call. Bumped alongside
+   circuit.h's MAX_COMPONENTS/MAX_WIRES scale-up (were 1024/64/32/256) - a
+   design actually using that new headroom (e.g. a CPU with hundreds of
+   gates) routinely has more distinct nets, and a single net (especially the
+   GND/+5V plane, which unions EVERY wire on that layer into one net - see
+   circuit_rebuild_nets) can now legitimately touch far more wires/pins than
+   "a few hundred wires/pins total" ever assumed. Still a plain linear scan
+   redone every frame, not cached - simplest correct thing, and still cheap
+   at this scale; only worth revisiting if profiling ever shows otherwise. */
+#define NET_MAX 4096
+#define NET_MAX_WIRES 256
+#define NET_MAX_DRIVERS 128
+#define NET_MAX_LOADS 1024
 
 typedef struct {
     int root;

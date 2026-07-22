@@ -150,6 +150,18 @@ int main(int argc, char **argv) {
         return 1;
     }
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
+    /* Without this, SDL swallows the very first click that reactivates an
+       unfocused window - it only uses it to focus the window, the same way
+       many native apps treat a click-to-focus, and does NOT forward it as a
+       real button-down/up to the app. That's exactly the window a click
+       lands in right after a modal Open/Save/Import file dialog closes (or
+       after alt-tabbing back), which is what made Wire/Import placement -
+       and, per the user, plain File > Open too - seem to eat the first
+       click: a debug trace confirmed the button-DOWN never arrived as an
+       SDL event at all, only its later button-UP did. Opting into
+       click-through makes that first click count as a real one instead of
+       a no-op focus click. */
+    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 
     SDL_Window *window = SDL_CreateWindow(
         "Isonic Developer x64",
@@ -197,7 +209,11 @@ int main(int argc, char **argv) {
     ic_tc74hc373_register();
     ic_tlc555_register();
 
-    App app;
+    /* static, not a plain stack local - Circuit (embedded in App) is now
+       several MB at the bumped MAX_COMPONENTS/MAX_WIRES/MAX_VIAS scale (see
+       circuit.h), far past what's safe to put on a thread's default stack;
+       same reasoning already documented for undo.c's own snapshot stack. */
+    static App app;
     app_init(&app, WINDOW_W, WINDOW_H, window);
 
     SDL_Texture *scene_target = create_scene_target(renderer, app.window_w, app.window_h);

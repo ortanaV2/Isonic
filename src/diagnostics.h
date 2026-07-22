@@ -6,9 +6,16 @@
 typedef enum { DIAG_WARNING, DIAG_ERROR } DiagSeverity;
 typedef enum { DIAG_BUS_CONFLICT, DIAG_OVERWRITE, DIAG_FLOATING_PIN, DIAG_FAN_OUT } DiagCategory;
 
-#define DIAG_MAX 64
-#define DIAG_MAX_WIRES 64
-#define DIAG_MAX_PINS 64
+/* DIAG_MAX_WIRES/DIAG_MAX_PINS match diagnostics.c's own NET_MAX_WIRES/
+   NET_MAX_LOADS (the largest of NET_MAX_DRIVERS/NET_MAX_LOADS a diagnostic
+   ever copies pins from) - both were bumped together with circuit.h's
+   MAX_COMPONENTS/MAX_WIRES scale-up (were 64/64/64), since a net's wire/pin
+   membership list is exactly what a Diagnostic here re-copies for
+   highlighting (see diag_add_wires/diag_add_pin) - a smaller cap here would
+   just re-truncate what collect_nets already gathered in full. */
+#define DIAG_MAX 256
+#define DIAG_MAX_WIRES 256
+#define DIAG_MAX_PINS 1024
 
 typedef struct {
     DiagSeverity severity;

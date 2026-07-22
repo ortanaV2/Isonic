@@ -20,10 +20,11 @@
    Implemented as a plain snapshot stack: Circuit has no pointers to owned
    memory (its one pointer member, Component.ic_def, points at static
    registry data that never moves), so a whole-struct copy is a perfectly
-   valid snapshot of everything else. At ~300KB per Circuit, a 100-deep
-   stack is ~30MB, which is why the stack itself is a static global (see
-   undo.c) rather than embedded in App: App is a plain stack-local in
-   main(), nowhere near that much stack headroom. */
+   valid snapshot of everything else. Circuit is well over 1MB now (see
+   circuit.h's MAX_COMPONENTS/MAX_WIRES/MAX_VIAS), so a 100-deep stack is a
+   few hundred MB - fine as static storage (see g_stack in undo.c), but far
+   too large to ever put on a plain stack frame, which is why App itself is
+   `static App app` in main.c rather than an ordinary stack local. */
 
 void undo_init(void);
 

@@ -4,6 +4,7 @@
 #include "render.h"
 #include "undo.h"
 #include "platform_win32.h"
+#include "schematic_io.h"
 
 /* Every structural edit marks the document dirty (for the New/Open/Close
    discard-confirm prompt and autosave, see app.h) at exactly the same call
@@ -267,12 +268,231 @@ static void set_active_tool(App *app, Tool tool) {
     app->active_tool = tool;
 }
 
+/* Grows a running (min_x, min_y) bounding corner to also cover (px, py) -
+   *have_bounds starts false and is set true on the first call, so the very
+   first point always "wins" instead of being compared against an arbitrary
+   sentinel. Shared by copy_selection's and import_schematic's bounding-box
+   passes below across every clipboard item type. */
+static void grow_bounds(int px, int py, int *min_x, int *min_y, int *have_bounds) {
+    if (!*have_bounds || px < *min_x) *min_x = px;
+    if (!*have_bounds || py < *min_y) *min_y = py;
+    *have_bounds = 1;
+}
+
+/* Maps a layer slot from an IMPORTED file's own Circuit onto an equivalent
+   slot in the current app->circuit, since the two files' layer stacks are
+   otherwise unrelated - unlike a same-session copy/paste (see ClipboardWire's
+   own comment in app.h), a bare slot INDEX from another file means nothing
+   here. GND/+5V-role layers are mapped by ROLE, never by name: exactly one
+   of each always exists in any valid Circuit (see circuit_init/
+   circuit_remove_layer), so "the ground plane" in the source file is just
+   "the ground plane" here too, whatever slot either happens to occupy.
+   An ordinary layer is matched by exact name first (so importing your own
+   past work, or a file that follows the same TOP-Signal/BOTTOM-Signal
+   convention, lands on the SAME layer instead of a redundant duplicate);
+   only if nothing matches AND a free slot remains is a new one created via
+   circuit_add_layer, copying the source's name/color. layer_map caches each
+   source slot's resolution (-2 = not yet resolved, see its callers) so a
+   file with many wires on the same layer only resolves it once. Returns -1
+   if the slot can't be resolved at all (unused source slot, or no room left
+   for a needed new layer) - commit_paste's existing layer_slot_valid check
+   already treats -1 as "gone", falling a wire back to the active layer and
+   simply dropping a via, the same fallback an ordinary same-session paste
+   uses if a copied layer no longer exists by paste time. */
+static int resolve_import_layer(App *app, const Circuit *src, int layer_map[MAX_LAYERS], int src_slot) {
+    if (src_slot < 0 || src_slot >= MAX_LAYERS || !src->layers[src_slot].in_use) return -1;
+    if (layer_map[src_slot] != -2) return layer_map[src_slot];
+
+    LayerRole role = src->layers[src_slot].role;
+    int found = -1;
+    if (role == LAYER_ROLE_GND || role == LAYER_ROLE_POWER) {
+        for (int j = 0; j < MAX_LAYERS; j++) {
+            if (app->circuit.layers[j].in_use && app->circuit.layers[j].role == role) { found = j; break; }
+        }
+    } else {
+        for (int j = 0; j < MAX_LAYERS; j++) {
+            if (app->circuit.layers[j].in_use && app->circuit.layers[j].role == LAYER_ROLE_NORMAL &&
+                strcmp(app->circuit.layers[j].name, src->layers[src_slot].name) == 0) {
+                found = j;
+                break;
+            }
+        }
+        if (found < 0) {
+            int pos = circuit_add_layer(&app->circuit, src->layers[src_slot].name,
+                                         src->layers[src_slot].color_r, src->layers[src_slot].color_g,
+                                         src->layers[src_slot].color_b);
+            if (pos >= 0) found = app->circuit.layer_order[pos];
+        }
+    }
+    layer_map[src_slot] = found;
+    return found;
+}
+
+/* File > Import Schematic - loads another .isonic file's full contents
+   (every component/wire/via/section/text label) straight into the
+   clipboard, exactly as if the user had selected everything in that file
+   and pressed Ctrl+C, then arms `pasting` the same way - so it's placed into
+   the CURRENT circuit the same way any other paste is: a ghost follows the
+   cursor until a click commits it (see commit_paste) or Escape cancels,
+   never silently overwriting anything already open. The source file is
+   parsed into a throwaway scratch Circuit (its camera is discarded - only
+   its element lists matter here) via the same schematic_load Open uses,
+   never assigned over app->circuit the way Open does. See
+   resolve_import_layer above for how each wire/via's layer carries across
+   from a file with an unrelated layer stack. */
+static void import_schematic(App *app, const char *path) {
+    /* static, not a stack local - Circuit is multi-MB at circuit.h's bumped
+       MAX_COMPONENTS/MAX_WIRES/MAX_VIAS scale, the same reasoning
+       main.c's own `static App app` and undo.c's g_stack already document;
+       matches circuit_rebuild_nets' own `static PointEntry poi[TOTAL_POINTS]`
+       scratch-buffer precedent for a function-local buffer this large. Safe
+       here specifically because import_schematic is never reentrant/
+       recursive/called from more than one place at a time. */
+    static Circuit src;
+    Camera discard_camera;
+    camera_init(&discard_camera);
+    if (!schematic_load(&src, &discard_camera, path)) {
+        platform_show_error(app->window, "Could not import that file - it may not be a valid Isonic schematic.");
+        return;
+    }
+
+    int layer_map[MAX_LAYERS];
+    for (int i = 0; i < MAX_LAYERS; i++) layer_map[i] = -2;
+    int layer_order_before = app->circuit.layer_order_count;
+
+    app->clipboard_component_count = 0;
+    app->clipboard_wire_count = 0;
+    app->clipboard_via_count = 0;
+    app->clipboard_section_count = 0;
+    app->clipboard_text_label_count = 0;
+
+    for (int i = 0; i < src.component_high_water && app->clipboard_component_count < CLIPBOARD_MAX_COMPONENTS; i++) {
+        const Component *c = &src.components[i];
+        if (!c->in_use) continue;
+        ClipboardComponent *cc = &app->clipboard_components[app->clipboard_component_count++];
+        cc->ic_def = c->ic_def;
+        cc->dx = c->grid_x;
+        cc->dy = c->grid_y;
+        cc->rotation = c->rotation;
+    }
+    for (int i = 0; i < src.wire_high_water && app->clipboard_wire_count < CLIPBOARD_MAX_WIRES; i++) {
+        const Wire *w = &src.wires[i];
+        if (!w->in_use) continue;
+        ClipboardWire *cw = &app->clipboard_wires[app->clipboard_wire_count++];
+        cw->from_dx = w->from_x;
+        cw->from_dy = w->from_y;
+        cw->to_dx = w->to_x;
+        cw->to_dy = w->to_y;
+        cw->kind = w->kind;
+        cw->input_value = w->input_value;
+        cw->layer_slot = resolve_import_layer(app, &src, layer_map, w->layer_slot);
+    }
+    /* same "only ever tags along with an already-gathered wire" rule
+       copy_selection's own via pass uses - see its comment in app.h. */
+    for (int vi = 0; vi < src.via_high_water && app->clipboard_via_count < CLIPBOARD_MAX_VIAS; vi++) {
+        const Via *v = &src.vias[vi];
+        if (!v->in_use) continue;
+        int attached = 0;
+        for (int wi = 0; wi < app->clipboard_wire_count; wi++) {
+            const ClipboardWire *cw = &app->clipboard_wires[wi];
+            if ((cw->from_dx == v->x && cw->from_dy == v->y) || (cw->to_dx == v->x && cw->to_dy == v->y)) {
+                attached = 1;
+                break;
+            }
+        }
+        if (!attached) continue;
+        ClipboardVia *cv = &app->clipboard_vias[app->clipboard_via_count++];
+        cv->dx = v->x;
+        cv->dy = v->y;
+        cv->layer_slot_a = resolve_import_layer(app, &src, layer_map, v->layer_slot_a);
+        cv->layer_slot_b = resolve_import_layer(app, &src, layer_map, v->layer_slot_b);
+    }
+    for (int i = 0; i < src.section_high_water && app->clipboard_section_count < CLIPBOARD_MAX_SECTIONS; i++) {
+        const Section *s = &src.sections[i];
+        if (!s->in_use) continue;
+        ClipboardSection *cs = &app->clipboard_sections[app->clipboard_section_count++];
+        cs->dx0 = s->x0;
+        cs->dy0 = s->y0;
+        cs->dx1 = s->x1;
+        cs->dy1 = s->y1;
+        snprintf(cs->label, sizeof(cs->label), "%s", s->label);
+    }
+    for (int i = 0; i < src.text_label_high_water && app->clipboard_text_label_count < CLIPBOARD_MAX_TEXT_LABELS; i++) {
+        const TextLabel *t = &src.text_labels[i];
+        if (!t->in_use) continue;
+        ClipboardTextLabel *ct = &app->clipboard_text_labels[app->clipboard_text_label_count++];
+        ct->dx = t->x;
+        ct->dy = t->y;
+        snprintf(ct->text, sizeof(ct->text), "%s", t->text);
+    }
+
+    /* a brand-new layer created above (resolve_import_layer) is a real,
+       structural change to the current circuit even if the file turns out
+       to be empty/nothing from it is placeable below - keep it undoable
+       and reflected in the dirty/title state like any other structural
+       edit (see push_undo's own comment). */
+    if (app->circuit.layer_order_count != layer_order_before) push_undo(app);
+
+    if (clipboard_is_empty(app)) return;
+
+    /* rebase every just-gathered absolute coordinate to an offset from the
+       whole imported set's own bounding-box min corner - same as
+       copy_selection. */
+    int min_x = 0, min_y = 0, have_bounds = 0;
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        grow_bounds(app->clipboard_components[i].dx, app->clipboard_components[i].dy, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        grow_bounds(app->clipboard_wires[i].from_dx, app->clipboard_wires[i].from_dy, &min_x, &min_y, &have_bounds);
+        grow_bounds(app->clipboard_wires[i].to_dx, app->clipboard_wires[i].to_dy, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        grow_bounds(app->clipboard_vias[i].dx, app->clipboard_vias[i].dy, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        grow_bounds(app->clipboard_sections[i].dx0, app->clipboard_sections[i].dy0, &min_x, &min_y, &have_bounds);
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        grow_bounds(app->clipboard_text_labels[i].dx, app->clipboard_text_labels[i].dy, &min_x, &min_y, &have_bounds);
+    }
+
+    for (int i = 0; i < app->clipboard_component_count; i++) {
+        app->clipboard_components[i].dx -= min_x;
+        app->clipboard_components[i].dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_wire_count; i++) {
+        app->clipboard_wires[i].from_dx -= min_x;
+        app->clipboard_wires[i].from_dy -= min_y;
+        app->clipboard_wires[i].to_dx -= min_x;
+        app->clipboard_wires[i].to_dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_via_count; i++) {
+        app->clipboard_vias[i].dx -= min_x;
+        app->clipboard_vias[i].dy -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_section_count; i++) {
+        app->clipboard_sections[i].dx0 -= min_x;
+        app->clipboard_sections[i].dy0 -= min_y;
+        app->clipboard_sections[i].dx1 -= min_x;
+        app->clipboard_sections[i].dy1 -= min_y;
+    }
+    for (int i = 0; i < app->clipboard_text_label_count; i++) {
+        app->clipboard_text_labels[i].dx -= min_x;
+        app->clipboard_text_labels[i].dy -= min_y;
+    }
+
+    cancel_transient_actions(app);
+    app->pasting = 1;
+    app->place_rotation = 0;
+}
+
 /* Each File dropdown action, dispatched to the matching app_* lifecycle
    function (app.h) - Open prompts its dialog before the discard-confirm
    check (no point asking to discard if the user's about to cancel Open
-   anyway); Save/Save As/Close Window each already do their own
-   confirm/fallback internally. New Window spawns a wholly independent
-   process, so it's the only action with no discard check at all. */
+   anyway); Import prompts the same dialog but never discard-checks (nothing
+   existing is discarded - it only adds to the current circuit, the same
+   reasoning New Window already gets); Save/Save As/Close Window each already
+   do their own confirm/fallback internally. */
 static void dispatch_file_menu_item(App *app, FileMenuItem item) {
     char path[ISONIC_PATH_MAX];
     switch (item) {
@@ -285,6 +505,11 @@ static void dispatch_file_menu_item(App *app, FileMenuItem item) {
         case FILE_MENU_OPEN:
             if (platform_open_file_dialog(app->window, path, sizeof(path)) && app_confirm_discard_if_dirty(app)) {
                 app_load_from_file(app, path);
+            }
+            break;
+        case FILE_MENU_IMPORT:
+            if (platform_open_file_dialog(app->window, path, sizeof(path))) {
+                import_schematic(app, path);
             }
             break;
         case FILE_MENU_SAVE:
@@ -980,17 +1205,6 @@ static int find_text_label_at(App *app, int mx, int my) {
    in that rare case. */
 static int layer_slot_valid(const Circuit *circuit, int layer_slot) {
     return layer_slot >= 0 && layer_slot < MAX_LAYERS && circuit->layers[layer_slot].in_use;
-}
-
-/* Grows a running (min_x, min_y) bounding corner to also cover (px, py) -
-   *have_bounds starts false and is set true on the first call, so the very
-   first point always "wins" instead of being compared against an arbitrary
-   sentinel. Shared by copy_selection's bounding-box pass below across every
-   clipboard item type. */
-static void grow_bounds(int px, int py, int *min_x, int *min_y, int *have_bounds) {
-    if (!*have_bounds || px < *min_x) *min_x = px;
-    if (!*have_bounds || py < *min_y) *min_y = py;
-    *have_bounds = 1;
 }
 
 /* Ctrl+C - snapshots the current selection (any mix of components/wires/
