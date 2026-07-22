@@ -37,20 +37,12 @@ tool.
 - **Multi-layer routing** — organize wiring across any number of named,
   colored layers (with GND/POWER roles), connected with vias where they need
   to cross.
-- **Undo/redo** — every structural edit (wiring, placing, deleting, layer
-  changes) is undoable, including via the mouse's back/forward side buttons.
-- **File save/load** — schematics save to a versioned, human-readable
-  `.isonic` file (layers, components, wiring, vias, and EEPROM contents all
-  round-trip).
 - **EEPROM programming** — an AT28C64B's memory can be viewed and edited
   directly, byte by byte, through a "Manage Data" panel, without wiring up
   its address/data/control pins.
 - **Custom ICs** — new chips are added by defining their pinout and behavior
   once (see `src/ics/`); they then show up in the parts menu like any
   built-in part.
-- **Configurable settings** — autosave interval, which corner the Layers
-  panel docks to, and every tool/action keybind are rebindable from the
-  Settings popup and persist across sessions.
 - **Annotations** — Section-Labeling draws a labeled, resizable, lockable
   rectangle to frame off part of a schematic; Text Label drops a single
   freestanding line of text — both purely organizational, with no effect on
@@ -88,18 +80,16 @@ independent of any schematic file.
 - **Space** — switch to Select mode
 - **Q** — switch to the Input tool
 - **E** — switch to the Output tool
+- **T** — switch to the Text Label tool
 - **R** — while an IC is pending placement (Components menu, Ctrl+C, or
   Ctrl+V), rotate it 90° counterclockwise before dropping it
 - **1-9** — pick which layer new wires route on
+- **Double middle-click** — reset the camera to its default position/zoom
 - **Shift (hold)** — preview all layers at once; **Ctrl+Shift** toggles that
   preview locked on/off
 - **Delete / Backspace** — delete the current selection
 - **Escape** — cancel the current action, close an open popup, or drop the
   selection
-- **Ctrl+C** — copy whatever's under the cursor (a component, a Section, or
-  a Text Label) and, for a component, start placing copies at the cursor
-- **Ctrl+V** — paste another copy of whatever was last copied; a Section or
-  Text Label drops immediately at the cursor's current position
 - **Ctrl+S** — save (falls through to Save As if the schematic has no path yet)
 - **Ctrl+Z / Ctrl+Y** — undo / redo (**Ctrl+Shift+Z** also redoes)
 
@@ -120,11 +110,12 @@ start placing it:
 - **Counters** — 12-Bit Binary Counter (SN74HC4040N)
 - **Timers** — Timer (TLC555)
 - **Memory** — EEPROM (AT28C64B-15PU)
+- **Arithmetic** — 4-Bit Adder (CD74HC283E)
 
 ### Taskbar
 
-- **File** — New Schematic, New Window, Open File, Save, Save As, Close
-  Window (prompts to save unsaved changes first)
+- **File** — New Schematic, New Window, Open File, Import Schematic, Save,
+  Save As, Close Window (prompts to save unsaved changes first)
 - **Settings** — autosave frequency, Layers panel corner, and keybind
   rebinding, with Save and Reset Default
 - **Section-Labeling / Text Label** — a separate group to the right of
