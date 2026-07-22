@@ -73,7 +73,7 @@ typedef enum {
     CANVAS_EDIT_NEW_TEXT_LABEL,
     CANVAS_EDIT_TEXT_LABEL
 } CanvasEditKind;
-/* Big enough for either buffer - TEXT_LABEL_MAX_LEN (48) is the larger of
+/* Big enough for either buffer - TEXT_LABEL_MAX_LEN (96) is the larger of
    the two (see circuit.h). */
 #define CANVAS_EDIT_BUF_LEN (TEXT_LABEL_MAX_LEN + 1)
 

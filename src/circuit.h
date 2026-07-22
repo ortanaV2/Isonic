@@ -98,8 +98,8 @@ typedef struct {
    many functional-block Sections) plausibly wants more of these too. */
 #define MAX_SECTIONS 256
 #define MAX_TEXT_LABELS 512
-#define SECTION_LABEL_MAX_LEN 32
-#define TEXT_LABEL_MAX_LEN 48
+#define SECTION_LABEL_MAX_LEN 64
+#define TEXT_LABEL_MAX_LEN 96
 /* Smallest a section's rectangle may ever be (grid cells, both axes) - keeps
    a degenerate zero/negative-size drag or corner-handle drag from ever
    collapsing it into something invisible/unselectable. */
