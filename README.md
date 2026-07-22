@@ -2,6 +2,11 @@
 
 # Isonic: Computer Architecture Development Software
 
+[![Build](https://github.com/ortanaV2/Isonic/actions/workflows/build.yml/badge.svg)](https://github.com/ortanaV2/Isonic/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/ortanaV2/Isonic)](https://github.com/ortanaV2/Isonic/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/ortanaV2/Isonic)](LICENSE)
+![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)
+
 Isonic is an application for designing and simulating computer architectures.
 It combines schematic capture with live logic simulation, letting you build
 circuits - from single gates up to full CPUs - out of wires and ICs and watch

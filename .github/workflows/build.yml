@@ -1,0 +1,46 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags-ignore: ["v*"] # release.yml already builds tag pushes
+  pull_request:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-make
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-SDL2_ttf
+
+      # A fresh checkout has no stale .o files, so this always recompiles
+      # every translation unit - every -Wall/-Wextra warning the Makefile
+      # already enables is guaranteed to show up here, not just on whichever
+      # files happened to change. set -o pipefail is what lets mingw32-make's
+      # own exit code (a real compile error) survive being piped into tee;
+      # without it a failing build would be masked by tee's own exit 0.
+      - name: Build and capture warnings
+        run: |
+          set -o pipefail
+          mingw32-make 2>&1 | tee build.log
+
+      - name: Fail on compiler warnings
+        run: |
+          if grep -q "warning:" build.log; then
+            echo "::error::Compiler warnings were treated as build failures - see below"
+            grep "warning:" build.log
+            exit 1
+          fi
