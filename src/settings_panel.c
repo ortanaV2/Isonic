@@ -149,7 +149,7 @@ void settings_panel_render(SDL_Renderer *renderer, TTF_Font *font, SettingsPanel
        layer_panel_render - built up from the rows actually drawn, rather
        than a hardcoded guess that could drift out of sync with the layout
        below. */
-    int content_h = HEADER_H + ROW_H * 4 + SECTION_GAP + ROW_H + ROW_H * KEYBIND_ACTION_COUNT + FOOTER_GAP + FOOTER_H + ROW_PAD_X;
+    int content_h = HEADER_H + ROW_H * 5 + SECTION_GAP + ROW_H + ROW_H * KEYBIND_ACTION_COUNT + FOOTER_GAP + FOOTER_H + ROW_PAD_X;
     int modal_w = MODAL_W;
     int modal_x = (window_w - modal_w) / 2;
     if (modal_x < 8) modal_x = 8;
@@ -259,6 +259,22 @@ void settings_panel_render(SDL_Renderer *renderer, TTF_Font *font, SettingsPanel
         y += ROW_H;
     }
 
+    /* Whether dragging a component/wire/selection drags along anything
+       attached at its endpoints (Stay Connected, today's fixed behavior) or
+       leaves everything else in place, unplugging the connection instead
+       (Detach) - see snapshot_drag_attachments in input_handler.c. */
+    {
+        SDL_Rect row = { sp->modal_rect.x, y, modal_w, ROW_H };
+        if (font != NULL) {
+            text_util_draw(renderer, font, "Dragging Connections", row.x + ROW_PAD_X, row.y + (ROW_H - 14) / 2, TEXT_COLOR);
+        }
+        sp->wire_drag_detach_rect = (SDL_Rect){ right_x - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        sp->wire_drag_stay_rect = (SDL_Rect){ sp->wire_drag_detach_rect.x - 4 - TOGGLE_W, row.y + (ROW_H - BTN_H) / 2, TOGGLE_W, BTN_H };
+        draw_button(renderer, font, &sp->wire_drag_stay_rect, "Stay", !sp->working.wire_drag_detach, point_in(&sp->wire_drag_stay_rect, hover_x, hover_y));
+        draw_button(renderer, font, &sp->wire_drag_detach_rect, "Detach", sp->working.wire_drag_detach, point_in(&sp->wire_drag_detach_rect, hover_x, hover_y));
+        y += ROW_H;
+    }
+
     y += SECTION_GAP;
     SDL_SetRenderDrawColor(renderer, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 255);
     SDL_RenderDrawLine(renderer, sp->modal_rect.x, y, sp->modal_rect.x + modal_w, y);
@@ -363,6 +379,14 @@ SettingsPanelClickResult settings_panel_handle_click(SettingsPanel *sp, int x, i
     }
     if (point_in(&sp->diag_hover_off_rect, x, y)) {
         sp->working.diag_hover_enabled = 0;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->wire_drag_stay_rect, x, y)) {
+        sp->working.wire_drag_detach = 0;
+        return SETTINGS_PANEL_CLICK_CONSUMED;
+    }
+    if (point_in(&sp->wire_drag_detach_rect, x, y)) {
+        sp->working.wire_drag_detach = 1;
         return SETTINGS_PANEL_CLICK_CONSUMED;
     }
     for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {

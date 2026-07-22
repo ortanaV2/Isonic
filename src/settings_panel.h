@@ -6,8 +6,8 @@
 #include "settings.h"
 
 /* The centered-modal "Settings" popup - autosave frequency, which corner the
-   Layers panel docks to, and interactive keybind rebinding, plus Save/Reset
-   Default. Unlike layer_panel.h/data_editor.h (docked side panels, always
+   Layers panel docks to, whether dragging stays connected or detaches, and
+   interactive keybind rebinding, plus Save/Reset Default. Unlike layer_panel.h/data_editor.h (docked side panels, always
    visible or toggled in place) this is a true modal: while open it sits over
    a dimming scrim and swallows the whole window (see
    settings_panel_covers_point) - nothing behind it reacts to the cursor at
@@ -46,6 +46,7 @@ typedef struct {
     SDL_Rect corner_left_rect, corner_right_rect;
     SDL_Rect diag_chips_on_rect, diag_chips_off_rect;
     SDL_Rect diag_hover_on_rect, diag_hover_off_rect;
+    SDL_Rect wire_drag_stay_rect, wire_drag_detach_rect;
     SDL_Rect keybind_box_rects[KEYBIND_ACTION_COUNT];
     SDL_Rect save_button_rect;
     SDL_Rect reset_button_rect;

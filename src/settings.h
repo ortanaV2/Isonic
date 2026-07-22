@@ -37,6 +37,15 @@ typedef struct {
                                      chip or a flagged wire/pin on the canvas - the colored
                                      highlight dots themselves (render_diagnostic_highlights)
                                      stay regardless, only the text popup is gated by this */
+    int wire_drag_detach;        /* 0 = Stay Connected (today's fixed behavior): dragging a
+                                     component/wire/selection also drags along any unselected
+                                     wire endpoint or via sitting on one of its anchor points,
+                                     even if that stretches the dragged-along wire into a
+                                     diagonal. 1 = Detach: only the selected item(s) move: nothing
+                                     else is dragged along, so anything that was attached is left
+                                     behind at its old position - "unplugging" the connection
+                                     instead of stretching it. See snapshot_drag_attachments in
+                                     input_handler.c, the single choke point this gates. */
     SDL_Scancode keybind[KEYBIND_ACTION_COUNT];
 } Settings;
 

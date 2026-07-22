@@ -27,6 +27,7 @@ void settings_defaults(Settings *settings) {
     settings->layer_panel_anchor_left = 0;
     settings->diag_chips_enabled = 1;
     settings->diag_hover_enabled = 1;
+    settings->wire_drag_detach = 0;
     settings->keybind[KEYBIND_SELECT] = SDL_SCANCODE_SPACE;
     settings->keybind[KEYBIND_WIRE] = SDL_SCANCODE_W;
     /* was V - collided with Ctrl+V once Paste got its own keybind below
@@ -71,6 +72,8 @@ void settings_load(Settings *settings) {
             settings->diag_chips_enabled = atoi(val);
         } else if (strcmp(key, "diag_hover_enabled") == 0) {
             settings->diag_hover_enabled = atoi(val);
+        } else if (strcmp(key, "wire_drag_detach") == 0) {
+            settings->wire_drag_detach = atoi(val);
         } else {
             for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
                 if (strcmp(key, k_action_keys[i]) == 0) {
@@ -99,6 +102,8 @@ int settings_save(const Settings *settings) {
     snprintf(line, sizeof(line), "diag_chips_enabled=%d", settings->diag_chips_enabled);
     kv_write_line(f, line);
     snprintf(line, sizeof(line), "diag_hover_enabled=%d", settings->diag_hover_enabled);
+    kv_write_line(f, line);
+    snprintf(line, sizeof(line), "wire_drag_detach=%d", settings->wire_drag_detach);
     kv_write_line(f, line);
     for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
         snprintf(line, sizeof(line), "%s=%d", k_action_keys[i], (int)settings->keybind[i]);

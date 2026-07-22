@@ -698,6 +698,11 @@ static int drag_attach_via_recorded(const App *app, int via_id) {
 static void snapshot_drag_attachments(App *app, const GridPoint *anchors, int anchor_count, int exclude_wire_id) {
     app->drag_attach_count = 0;
     app->drag_attach_via_count = 0;
+    /* Detach mode: record nothing, so apply_drag_attachments has nothing to
+       move. Whatever was attached at these anchor points is simply left
+       behind at its old position instead of being dragged along - see the
+       Settings popup's "Dragging Connections" toggle. */
+    if (app->settings.wire_drag_detach) return;
     for (int ai = 0; ai < anchor_count; ai++) {
         int px = anchors[ai].x, py = anchors[ai].y;
         for (int wi = 0; wi < app->circuit.wire_high_water && app->drag_attach_count < MAX_DRAG_ATTACHMENTS; wi++) {
