@@ -466,9 +466,9 @@ static void render_wire_line(SDL_Renderer *renderer, const Camera *cam, const Ci
    endpoints, or a mid-span tap - see circuit->junctions) or a lone, totally
    unconnected pin/wire-end (nothing else there at all). An ordinary 1-to-1
    connection (e.g. one wire ending exactly on one pin) needs no marker. */
-static void draw_lone_connection_dot(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, int x, int y) {
+static void draw_lone_connection_dot(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, int x, int y, int uf_idx) {
     if (circuit_point_is_junction(circuit, x, y)) return;
-    if (circuit_point_connection_count(circuit, x, y) != 1) return;
+    if (circuit_point_connection_count(circuit, uf_idx) != 1) return;
 
     int sx, sy;
     camera_grid_to_screen(cam, x, y, &sx, &sy);
@@ -477,14 +477,14 @@ static void draw_lone_connection_dot(SDL_Renderer *renderer, const Camera *cam, 
     draw_filled_circle(renderer, sx, sy, r);
 }
 
-static void render_wire_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Wire *w) {
+static void render_wire_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Wire *w, int wire_id) {
     /* the "from" end of an INPUT/OUTPUT wire gets its H/L label instead of a
        plain dot (see render_wire_terminal) - only the open "to" end follows
        the normal lone/junction dot rules */
     if (w->kind == WIRE_KIND_NORMAL) {
-        draw_lone_connection_dot(renderer, cam, circuit, w->from_x, w->from_y);
+        draw_lone_connection_dot(renderer, cam, circuit, w->from_x, w->from_y, WIRE_POINT_ID(wire_id, 0));
     }
-    draw_lone_connection_dot(renderer, cam, circuit, w->to_x, w->to_y);
+    draw_lone_connection_dot(renderer, cam, circuit, w->to_x, w->to_y, WIRE_POINT_ID(wire_id, 1));
 }
 
 static void render_junctions(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit) {
@@ -872,11 +872,11 @@ void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera 
     render_ic_body(renderer, font_large, cam, &ghost, 0, 0, 1, valid);
 }
 
-static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Component *c) {
+static void render_component_pin_dots(SDL_Renderer *renderer, const Camera *cam, const Circuit *circuit, const Component *c, int component_id) {
     for (int pi = 0; pi < c->pin_count; pi++) {
         int tip_x, tip_y;
         component_pin_world_pos(c, pi, &tip_x, &tip_y);
-        draw_lone_connection_dot(renderer, cam, circuit, tip_x, tip_y);
+        draw_lone_connection_dot(renderer, cam, circuit, tip_x, tip_y, GLOBAL_PIN_ID(component_id, pi));
     }
 }
 
@@ -1258,11 +1258,11 @@ void render_circuit(SDL_Renderer *renderer, TTF_Font *font_large, const Circuit 
        same layer-stacked order as pass 1, so a dot from a topmost-layer wire
        still wins over a lower-layer wire's line/dot passing underneath it. */
     for (int oi = 0; oi < wire_order_n; oi++) {
-        render_wire_dots(renderer, cam, circuit, &circuit->wires[wire_order[oi]]);
+        render_wire_dots(renderer, cam, circuit, &circuit->wires[wire_order[oi]], wire_order[oi]);
     }
     for (int i = 0; i < circuit->component_high_water; i++) {
         const Component *c = &circuit->components[i];
-        if (c->in_use) render_component_pin_dots(renderer, cam, circuit, c);
+        if (c->in_use) render_component_pin_dots(renderer, cam, circuit, c, i);
     }
     render_junctions(renderer, cam, circuit);
     render_vias(renderer, cam, circuit);

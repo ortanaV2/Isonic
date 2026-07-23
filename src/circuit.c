@@ -550,6 +550,7 @@ void circuit_rebuild_nets(Circuit *circuit) {
     prune_dangling_vias(circuit);
 
     for (int i = 0; i < TOTAL_POINTS; i++) circuit->pin_net[i] = i;
+    memset(circuit->point_connection_count, 0, sizeof(circuit->point_connection_count));
     circuit->junction_count = 0;
 
     /* a wire's own two ends are always one net, regardless of layer rules
@@ -617,7 +618,12 @@ void circuit_rebuild_nets(Circuit *circuit) {
     while (k < poi_count) {
         int j = k + 1;
         while (j < poi_count && poi[j].x == poi[k].x && poi[j].y == poi[k].y) j++;
+        int group_size = j - k;
         for (int a = k; a < j; a++) {
+            /* every point in this coincidence group shares the same count -
+               same definition circuit_point_connection_count always used,
+               just computed here once per group instead of once per query */
+            circuit->point_connection_count[poi[a].uf_idx] = group_size;
             for (int b = a + 1; b < j; b++) {
                 int a_is_pin = poi[a].layer_slot < 0;
                 int b_is_pin = poi[b].layer_slot < 0;
@@ -634,7 +640,7 @@ void circuit_rebuild_nets(Circuit *circuit) {
                 if (should_union) uf_union(circuit, poi[a].uf_idx, poi[b].uf_idx);
             }
         }
-        if (j - k >= 3) add_junction(circuit, poi[k].x, poi[k].y);
+        if (group_size >= 3) add_junction(circuit, poi[k].x, poi[k].y);
         k = j;
     }
 
@@ -750,24 +756,8 @@ int circuit_wire_layer_at_point(const Circuit *circuit, int x, int y) {
     return -1;
 }
 
-int circuit_point_connection_count(const Circuit *circuit, int x, int y) {
-    int count = 0;
-    for (int i = 0; i < circuit->wire_high_water; i++) {
-        const Wire *w = &circuit->wires[i];
-        if (!w->in_use) continue;
-        if (w->from_x == x && w->from_y == y) count++;
-        if (w->to_x == x && w->to_y == y) count++;
-    }
-    for (int ci = 0; ci < circuit->component_high_water; ci++) {
-        const Component *c = &circuit->components[ci];
-        if (!c->in_use) continue;
-        for (int pi = 0; pi < c->pin_count; pi++) {
-            int px, py;
-            component_pin_world_pos(c, pi, &px, &py);
-            if (px == x && py == y) count++;
-        }
-    }
-    return count;
+int circuit_point_connection_count(const Circuit *circuit, int uf_idx) {
+    return circuit->point_connection_count[uf_idx];
 }
 
 int circuit_point_is_junction(const Circuit *circuit, int x, int y) {

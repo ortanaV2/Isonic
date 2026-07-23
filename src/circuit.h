@@ -169,6 +169,14 @@ typedef struct {
 
     int pin_net[TOTAL_POINTS]; /* union-find parent array over pins + wire endpoints */
 
+    /* How many pin tips + wire endpoints land exactly on each point, indexed
+       the same way pin_net is (WIRE_POINT_ID/GLOBAL_PIN_ID) - rebuilt once
+       per circuit_rebuild_nets call, alongside pin_net itself, so
+       circuit_point_connection_count is an O(1) lookup instead of a
+       per-call linear rescan (see its own comment: render.c calls it once
+       per wire endpoint and once per component pin, every single frame). */
+    int point_connection_count[TOTAL_POINTS];
+
     GridPoint junctions[MAX_JUNCTIONS]; /* cached connection points, for rendering only */
     int junction_count;
 } Circuit;
@@ -225,12 +233,17 @@ void circuit_rebuild_nets(Circuit *circuit);
 int circuit_pin_net_root(Circuit *circuit, int component_id, int pin_index);
 int circuit_wire_net_root(Circuit *circuit, int wire_id);
 
-/* Number of pin tips + wire endpoints that land exactly on (x, y) - does NOT
-   count wires merely passing through (see circuit->junctions for those). A
-   dot should only ever be drawn where this is 1 (a lone, unconnected pin or
-   dangling wire end) - anywhere else, either nothing should be drawn (a plain
-   1-to-1 connection, count == 2) or the point is already a cached junction. */
-int circuit_point_connection_count(const Circuit *circuit, int x, int y);
+/* Number of pin tips + wire endpoints that land exactly on the point identified
+   by uf_idx (WIRE_POINT_ID(wire_id, end) or GLOBAL_PIN_ID(component_id,
+   pin_index)) - does NOT count wires merely passing through (see
+   circuit->junctions for those). A dot should only ever be drawn where this
+   is 1 (a lone, unconnected pin or dangling wire end) - anywhere else, either
+   nothing should be drawn (a plain 1-to-1 connection, count == 2) or the
+   point is already a cached junction. O(1): reads the cache circuit_rebuild_nets
+   fills in, rather than rescanning every pin/wire endpoint per call - callers
+   already know which pin/wire endpoint they're asking about (see render.c),
+   so passing its uf_idx costs nothing extra at the call site. */
+int circuit_point_connection_count(const Circuit *circuit, int uf_idx);
 
 /* True if (x, y) is a cached real junction (3+ endpoints, or a mid-span tap). */
 int circuit_point_is_junction(const Circuit *circuit, int x, int y);

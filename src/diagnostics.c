@@ -13,9 +13,9 @@
    gates) routinely has more distinct nets, and a single net (especially the
    GND/+5V plane, which unions EVERY wire on that layer into one net - see
    circuit_rebuild_nets) can now legitimately touch far more wires/pins than
-   "a few hundred wires/pins total" ever assumed. Still a plain linear scan
-   redone every frame, not cached - simplest correct thing, and still cheap
-   at this scale; only worth revisiting if profiling ever shows otherwise. */
+   "a few hundred wires/pins total" ever assumed. Net lookup itself (root ->
+   NetInfo) is hashed, not linearly scanned - see g_net_hash below - so this
+   larger cap no longer costs an O(net_count) rescan per wire/pin. */
 #define NET_MAX 4096
 #define NET_MAX_WIRES 256
 #define NET_MAX_DRIVERS 128
@@ -50,28 +50,60 @@ typedef struct {
 static NetInfo g_nets[NET_MAX];
 static int g_net_count;
 
+/* root -> index into g_nets[], open-addressed (linear probing), rebuilt from
+   scratch every collect_nets call alongside g_net_count - same lifetime, so
+   there's no staleness risk from this being static rather than living on
+   Circuit itself (unlike circuit.h's own per-Circuit caches, this never
+   needs to survive across frames or distinguish between Circuit instances).
+   Root values are union-find roots (arbitrary ints up to TOTAL_POINTS), not
+   small sequential ids, so a direct array index isn't an option - this
+   replaces what used to be a linear g_net_count-length scan per wire/pin
+   (collect_nets calls find_or_add_net once per wire and once per pin), which
+   made the whole pass O((wires+pins) x net_count). Sized well above NET_MAX
+   (2x) to keep the load factor <= 0.5, and since insertion always stops at
+   NET_MAX entries, linear probing is guaranteed to terminate - at least half
+   the table stays empty no matter how full g_nets gets. */
+#define NET_HASH_SIZE 8192
+#define NET_HASH_EMPTY (-1)
+static int g_net_hash[NET_HASH_SIZE];
+
+static unsigned net_hash(int root) {
+    unsigned h = (unsigned)root;
+    h ^= h >> 16;
+    h *= 0x7feb352dU;
+    h ^= h >> 15;
+    return h;
+}
+
 static NetInfo *find_or_add_net(int root) {
-    for (int i = 0; i < g_net_count; i++) {
-        if (g_nets[i].root == root) return &g_nets[i];
+    unsigned slot = net_hash(root) & (NET_HASH_SIZE - 1);
+    while (g_net_hash[slot] != NET_HASH_EMPTY) {
+        if (g_nets[g_net_hash[slot]].root == root) return &g_nets[g_net_hash[slot]];
+        slot = (slot + 1) & (NET_HASH_SIZE - 1);
     }
     if (g_net_count >= NET_MAX) return NULL;
-    NetInfo *n = &g_nets[g_net_count++];
+    int idx = g_net_count++;
+    NetInfo *n = &g_nets[idx];
     memset(n, 0, sizeof(*n));
     n->root = root;
+    g_net_hash[slot] = idx;
     return n;
 }
 
 /* Read-only lookup - NULL if that root has no recorded net (e.g. it
    overflowed NET_MAX during collect_nets). */
 static NetInfo *find_net(int root) {
-    for (int i = 0; i < g_net_count; i++) {
-        if (g_nets[i].root == root) return &g_nets[i];
+    unsigned slot = net_hash(root) & (NET_HASH_SIZE - 1);
+    while (g_net_hash[slot] != NET_HASH_EMPTY) {
+        if (g_nets[g_net_hash[slot]].root == root) return &g_nets[g_net_hash[slot]];
+        slot = (slot + 1) & (NET_HASH_SIZE - 1);
     }
     return NULL;
 }
 
 static void collect_nets(Circuit *circuit) {
     g_net_count = 0;
+    memset(g_net_hash, 0xFF, sizeof(g_net_hash)); /* NET_HASH_EMPTY is -1, i.e. all bits set */
 
     for (int wi = 0; wi < circuit->wire_high_water; wi++) {
         Wire *w = &circuit->wires[wi];
