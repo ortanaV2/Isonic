@@ -110,11 +110,12 @@ void render_via_tooltip(SDL_Renderer *renderer, TTF_Font *font, const char *laye
    landmark no matter what you're doing (see circuit.h's Section). editing_id
    (a circuit->sections[] index, or -1) is which section's label is
    currently being retyped - if it matches, editing_text is shown live (with
-   a blinking caret) in place of that section's own committed label, same
-   idea as layer_panel.c's rename field. hover_x/hover_y light up a hovered
-   lock icon. */
+   a blinking caret at editing_cursor, an index into editing_text - not
+   always at the end, see input_handler.c's canvas_edit_cursor) in place of
+   that section's own committed label, same idea as layer_panel.c's rename
+   field. hover_x/hover_y light up a hovered lock icon. */
 void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
-                      int editing_id, const char *editing_text, int hover_x, int hover_y);
+                      int editing_id, const char *editing_text, int editing_cursor, int hover_x, int hover_y);
 /* A section rectangle that's been dragged out but not committed to the
    circuit yet - still being typed for the very first time (see
    CANVAS_EDIT_NEW_SECTION in app.h), OR a copied one following the cursor as
@@ -127,7 +128,7 @@ void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, 
    icon or handles either way - those only make sense for something that
    already exists. */
 void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam,
-                             int x0, int y0, int x1, int y1, const char *editing_text, int ghost);
+                             int x0, int y0, int x1, int y1, const char *editing_text, int editing_cursor, int ghost);
 /* Screen-space bounds of a section's label text and its lock icon (in that
    left-to-right order, both sitting just above the rectangle's top-right
    corner) - shared by rendering and input_handler.c's click hit-testing,
@@ -148,12 +149,12 @@ int section_lock_icon_visible(TTF_Font *font, const Camera *cam, const Section *
    always drawn regardless of active tool, same reasoning as Sections above.
    editing_id/editing_text work identically to render_sections'. */
 void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
-                         int editing_id, const char *editing_text, int hover_x, int hover_y);
+                         int editing_id, const char *editing_text, int editing_cursor, int hover_x, int hover_y);
 /* A text label placed but not committed yet - see CANVAS_EDIT_NEW_TEXT_LABEL
    - or a copied one following the cursor as part of a paste ghost, same
    ghost param meaning as render_section_preview's own above. */
 void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam,
-                                int x, int y, const char *editing_text, int ghost);
+                                int x, int y, const char *editing_text, int editing_cursor, int ghost);
 /* Screen-space bounds of a text label's rendered text - shared with
    input_handler.c's click hit-testing, same role as section_label_bounds. */
 int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL_Rect *out);

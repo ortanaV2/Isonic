@@ -1087,6 +1087,7 @@ static void finish_section_draw(App *app, int mx, int my) {
     app->pending_section_y1 = hi_y;
     app->canvas_edit_buf[0] = '\0';
     app->canvas_edit_len = 0;
+    app->canvas_edit_cursor = 0;
     SDL_StartTextInput();
 }
 
@@ -1549,6 +1550,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
         app->pending_text_label_y = gy;
         app->canvas_edit_buf[0] = '\0';
         app->canvas_edit_len = 0;
+        app->canvas_edit_cursor = 0;
         SDL_StartTextInput();
         return;
     }
@@ -1599,6 +1601,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
                 app->canvas_edit_id = label_section_id;
                 snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", s->label);
                 app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
+                app->canvas_edit_cursor = app->canvas_edit_len;
                 SDL_StartTextInput();
             } else if (ctrl_held) {
                 toggle_section_selected(app, label_section_id);
@@ -1618,6 +1621,7 @@ static void handle_left_click(App *app, int mx, int my, int gx, int gy, float fx
             app->canvas_edit_id = text_label_id;
             snprintf(app->canvas_edit_buf, sizeof(app->canvas_edit_buf), "%s", t->text);
             app->canvas_edit_len = (int)strlen(app->canvas_edit_buf);
+            app->canvas_edit_cursor = app->canvas_edit_len;
             SDL_StartTextInput();
         } else if (ctrl_held) {
             toggle_text_label_selected(app, text_label_id);
@@ -2047,10 +2051,28 @@ void app_handle_event(App *app, const SDL_Event *event) {
                layer_panel_handle_key's own Escape/Enter make. */
             if (app->canvas_edit_kind != CANVAS_EDIT_NONE) {
                 if (sc == SDL_SCANCODE_BACKSPACE) {
-                    if (app->canvas_edit_len > 0) {
+                    if (event->key.keysym.mod & KMOD_CTRL) {
+                        /* clears the whole field in one go, not just back to
+                           the previous word boundary - matches what was
+                           actually asked for, a full-field clear shortcut */
+                        app->canvas_edit_buf[0] = '\0';
+                        app->canvas_edit_len = 0;
+                        app->canvas_edit_cursor = 0;
+                    } else if (app->canvas_edit_cursor > 0) {
+                        /* erase the character just before the cursor - not
+                           always the last one now that the cursor can sit
+                           mid-string. Shifts everything after it (including
+                           the trailing '\0') left by one. */
+                        memmove(&app->canvas_edit_buf[app->canvas_edit_cursor - 1],
+                                &app->canvas_edit_buf[app->canvas_edit_cursor],
+                                app->canvas_edit_len - app->canvas_edit_cursor + 1);
                         app->canvas_edit_len--;
-                        app->canvas_edit_buf[app->canvas_edit_len] = '\0';
+                        app->canvas_edit_cursor--;
                     }
+                } else if (sc == SDL_SCANCODE_LEFT) {
+                    if (app->canvas_edit_cursor > 0) app->canvas_edit_cursor--;
+                } else if (sc == SDL_SCANCODE_RIGHT) {
+                    if (app->canvas_edit_cursor < app->canvas_edit_len) app->canvas_edit_cursor++;
                 } else if (sc == SDL_SCANCODE_ESCAPE) {
                     cancel_canvas_edit(app);
                 } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
@@ -2170,9 +2192,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
             } else if (app->canvas_edit_kind != CANVAS_EDIT_NONE) {
                 int max_len = canvas_edit_max_len(app->canvas_edit_kind);
                 for (const char *p = event->text.text; *p != '\0' && app->canvas_edit_len < max_len; p++) {
-                    app->canvas_edit_buf[app->canvas_edit_len++] = *p;
+                    /* insert at the cursor - shifts whatever's after it
+                       (including the trailing '\0') right by one - instead
+                       of always appending at the end, so typing mid-string
+                       lands where the caret actually is. */
+                    memmove(&app->canvas_edit_buf[app->canvas_edit_cursor + 1], &app->canvas_edit_buf[app->canvas_edit_cursor],
+                            app->canvas_edit_len - app->canvas_edit_cursor + 1);
+                    app->canvas_edit_buf[app->canvas_edit_cursor] = *p;
+                    app->canvas_edit_len++;
+                    app->canvas_edit_cursor++;
                 }
-                app->canvas_edit_buf[app->canvas_edit_len] = '\0';
             }
             break;
 

@@ -51,6 +51,7 @@ static void app_reset_transient_state(App *app) {
     app->canvas_edit_id = -1;
     app->canvas_edit_buf[0] = '\0';
     app->canvas_edit_len = 0;
+    app->canvas_edit_cursor = 0;
 
     app->clipboard_component_count = 0;
     app->clipboard_wire_count = 0;
@@ -366,11 +367,11 @@ static void render_paste_ghost(SDL_Renderer *renderer, App *app, int gx, int gy)
     for (int i = 0; i < app->clipboard_section_count; i++) {
         const ClipboardSection *cs = &app->clipboard_sections[i];
         render_section_preview(renderer, app->font_large, &app->camera, gx + cs->dx0, gy + cs->dy0,
-                                gx + cs->dx1, gy + cs->dy1, cs->label, 1);
+                                gx + cs->dx1, gy + cs->dy1, cs->label, 0, 1);
     }
     for (int i = 0; i < app->clipboard_text_label_count; i++) {
         const ClipboardTextLabel *ct = &app->clipboard_text_labels[i];
-        render_text_label_preview(renderer, app->font_large, &app->camera, gx + ct->dx, gy + ct->dy, ct->text, 1);
+        render_text_label_preview(renderer, app->font_large, &app->camera, gx + ct->dx, gy + ct->dy, ct->text, 0, 1);
     }
 }
 
@@ -439,7 +440,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
        label untouched. */
     int editing_section_id = (app->canvas_edit_kind == CANVAS_EDIT_SECTION_LABEL) ? app->canvas_edit_id : -1;
     render_sections(renderer, app->font_large, &app->camera, &app->circuit, editing_section_id, app->canvas_edit_buf,
-                     outside_hover_mx, outside_hover_my);
+                     app->canvas_edit_cursor, outside_hover_mx, outside_hover_my);
 
     int layer_preview = app->shift_held || app->layer_preview_locked;
     render_circuit(renderer, app->font_large, &app->circuit, &app->camera, &app->diagnostics, layer_preview,
@@ -451,7 +452,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
        stay legible even where a wire happens to cross behind it. */
     int editing_text_label_id = (app->canvas_edit_kind == CANVAS_EDIT_TEXT_LABEL) ? app->canvas_edit_id : -1;
     render_text_labels(renderer, app->font_large, &app->camera, &app->circuit, editing_text_label_id, app->canvas_edit_buf,
-                        outside_hover_mx, outside_hover_my);
+                        app->canvas_edit_cursor, outside_hover_mx, outside_hover_my);
 
     if (app->wiring) {
         render_wire_preview(renderer, &app->camera, app->wire_from_gx, app->wire_from_gy,
@@ -520,14 +521,15 @@ void app_render(App *app, SDL_Renderer *renderer) {
            stale screen pixels here every frame instead (and would visibly
            drift if the camera zoomed mid-drag) */
         render_section_preview(renderer, app->font_large, &app->camera, app->section_drag_start_gx,
-                                app->section_drag_start_gy, app->section_drag_cur_gx, app->section_drag_cur_gy, "", 0);
+                                app->section_drag_start_gy, app->section_drag_cur_gx, app->section_drag_cur_gy, "", 0, 0);
     }
     if (app->canvas_edit_kind == CANVAS_EDIT_NEW_SECTION) {
         render_section_preview(renderer, app->font_large, &app->camera, app->pending_section_x0, app->pending_section_y0,
-                                app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf, 0);
+                                app->pending_section_x1, app->pending_section_y1, app->canvas_edit_buf,
+                                app->canvas_edit_cursor, 0);
     } else if (app->canvas_edit_kind == CANVAS_EDIT_NEW_TEXT_LABEL) {
         render_text_label_preview(renderer, app->font_large, &app->camera, app->pending_text_label_x,
-                                   app->pending_text_label_y, app->canvas_edit_buf, 0);
+                                   app->pending_text_label_y, app->canvas_edit_buf, app->canvas_edit_cursor, 0);
     }
 
     /* place_ic_name itself is deliberately never cleared just for switching

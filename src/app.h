@@ -257,6 +257,13 @@ typedef struct {
     int canvas_edit_id;
     char canvas_edit_buf[CANVAS_EDIT_BUF_LEN];
     int canvas_edit_len;
+    /* insertion point within canvas_edit_buf, in [0, canvas_edit_len] - Left/
+       Right move it, typed text inserts at it (not always at the end), and
+       Backspace erases the character just before it. Reset to canvas_edit_len
+       (end of whatever initial text there is, matching every other text-field
+       convention in this app) each time an edit starts - see the 4 call sites
+       that set canvas_edit_kind. */
+    int canvas_edit_cursor;
     int pending_section_x0, pending_section_y0, pending_section_x1, pending_section_y1;
     int pending_text_label_x, pending_text_label_y;
 

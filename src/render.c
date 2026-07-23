@@ -905,11 +905,24 @@ static const SDL_Color SECTION_COLOR = { 190, 190, 196, 255 };
    a fixed UI scale - canvas text is scaled by the current zoom (see
    `scale`), so a fixed pixel height here would either dwarf or vanish
    under the letters depending on zoom. */
-static void draw_canvas_text_cursor(SDL_Renderer *renderer, TTF_Font *font, const char *text, int text_x, int text_y,
-                                     float scale, SDL_Color col) {
+/* cursor_pos (in [0, strlen(text)]) is where in `text` the caret currently
+   sits - NOT always at the end, now that Left/Right can move it and typing
+   inserts there instead of always appending (see input_handler.c's
+   canvas_edit_cursor). Measuring only the substring up to cursor_pos (rather
+   than the whole string) is what places the caret mid-string instead of
+   always after the last character; text itself is still drawn in full by the
+   caller, this only affects where the blinking line lands. text_x is always
+   the LEFT edge of where the full string starts drawing, even when the
+   caller computed that position via right-alignment (see
+   render_section_preview) - the substring width added to it lands at the
+   right spot either way. */
+static void draw_canvas_text_cursor(SDL_Renderer *renderer, TTF_Font *font, const char *text, int cursor_pos,
+                                     int text_x, int text_y, float scale, SDL_Color col) {
     if ((SDL_GetTicks() / 500) % 2 != 0) return;
+    char prefix[TEXT_LABEL_MAX_LEN + 1];
+    snprintf(prefix, sizeof(prefix), "%.*s", cursor_pos, text);
     int tw = 0, th = 0;
-    if (font != NULL) text_util_measure(font, text, &tw, &th);
+    if (font != NULL) text_util_measure(font, prefix, &tw, &th);
     (void)th;
     int ascent = 0, descent = 0;
     if (font != NULL) text_util_font_metrics(font, &ascent, &descent);
@@ -1094,7 +1107,7 @@ static void draw_section_rect(SDL_Renderer *renderer, const Camera *cam, int x0,
 }
 
 void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
-                      int editing_id, const char *editing_text, int hover_x, int hover_y) {
+                      int editing_id, const char *editing_text, int editing_cursor, int hover_x, int hover_y) {
     float cell = camera_cell_px(cam);
     float scale = label_scale(cell);
 
@@ -1114,7 +1127,7 @@ void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, 
                "chrome" gray, not for text meant to actually be read. */
             SDL_Color text_col = s->selected ? SELECTION_COLOR : LABEL_COLOR;
             text_util_draw_scaled(renderer, font, shown, label_rect.x, label_rect.y, text_col, scale);
-            if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, label_rect.x, label_rect.y, scale, text_col);
+            if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, editing_cursor, label_rect.x, label_rect.y, scale, text_col);
 
             if (section_lock_icon_visible(font, cam, s, hover_x, hover_y)) {
                 int lock_hovered = (hover_x >= lock_rect.x && hover_x < lock_rect.x + lock_rect.w &&
@@ -1141,7 +1154,7 @@ void render_sections(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, 
 }
 
 void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x0, int y0, int x1, int y1,
-                             const char *editing_text, int ghost) {
+                             const char *editing_text, int editing_cursor, int ghost) {
     draw_section_rect(renderer, cam, x0, y0, x1, y1, ghost ? SELECTION_COLOR : SECTION_COLOR);
     if (font == NULL) return;
     float cell = camera_cell_px(cam);
@@ -1162,7 +1175,7 @@ void render_section_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera
     text_util_draw_scaled(renderer, font, editing_text, label_x, label_y, text_col, scale);
     /* a ghost isn't actively being typed into - no blinking caret, unlike
        the in-progress-drawing preview this function also renders */
-    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, label_x, label_y, scale, text_col);
+    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, editing_cursor, label_x, label_y, scale, text_col);
 }
 
 int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL_Rect *out) {
@@ -1178,7 +1191,7 @@ int text_label_bounds(TTF_Font *font, const Camera *cam, const TextLabel *t, SDL
 }
 
 void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, const Circuit *circuit,
-                         int editing_id, const char *editing_text, int hover_x, int hover_y) {
+                         int editing_id, const char *editing_text, int editing_cursor, int hover_x, int hover_y) {
     (void)hover_x; (void)hover_y; /* no hover-only affordance on a plain text label, unlike a section's lock icon */
     float scale = label_scale(camera_cell_px(cam));
     for (int i = 0; i < circuit->text_label_high_water; i++) {
@@ -1190,12 +1203,12 @@ void render_text_labels(SDL_Renderer *renderer, TTF_Font *font, const Camera *ca
         const char *shown = being_edited ? editing_text : t->text;
         SDL_Color col = t->selected ? SELECTION_COLOR : LABEL_COLOR;
         text_util_draw_scaled(renderer, font, shown, bounds.x, bounds.y, col, scale);
-        if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, bounds.x, bounds.y, scale, col);
+        if (being_edited) draw_canvas_text_cursor(renderer, font, editing_text, editing_cursor, bounds.x, bounds.y, scale, col);
     }
 }
 
 void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Camera *cam, int x, int y,
-                                const char *editing_text, int ghost) {
+                                const char *editing_text, int editing_cursor, int ghost) {
     if (font == NULL) return;
     float cell = camera_cell_px(cam);
     float scale = label_scale(cell);
@@ -1206,7 +1219,7 @@ void render_text_label_preview(SDL_Renderer *renderer, TTF_Font *font, const Cam
     text_util_draw_scaled(renderer, font, editing_text, sx, sy, color, scale);
     /* a ghost isn't actively being typed into - no blinking caret, unlike
        the in-progress-typing preview this function also renders */
-    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, sx, sy, scale, color);
+    if (!ghost) draw_canvas_text_cursor(renderer, font, editing_text, editing_cursor, sx, sy, scale, color);
 }
 
 /* Every wire-drawing pass in render_circuit below iterates wires in THIS
