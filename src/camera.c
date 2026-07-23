@@ -17,6 +17,12 @@ void camera_grid_to_screen(const Camera *cam, int gx, int gy, int *sx, int *sy) 
     *sy = (int)lroundf(gy * cell + cam->pan_y);
 }
 
+void camera_grid_to_screen_f(const Camera *cam, float gx, float gy, int *sx, int *sy) {
+    float cell = camera_cell_px(cam);
+    *sx = (int)lroundf(gx * cell + cam->pan_x);
+    *sy = (int)lroundf(gy * cell + cam->pan_y);
+}
+
 void camera_screen_to_grid(const Camera *cam, int sx, int sy, int *gx, int *gy) {
     float cell = camera_cell_px(cam);
     *gx = (int)lroundf((sx - cam->pan_x) / cell);

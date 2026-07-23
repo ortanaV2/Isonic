@@ -402,7 +402,10 @@ void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int
     }
 }
 
-void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y1) {
+void render_marquee_select(SDL_Renderer *renderer, const Camera *cam, float gx0, float gy0, float gx1, float gy1) {
+    int x0, y0, x1, y1;
+    camera_grid_to_screen_f(cam, gx0, gy0, &x0, &y0);
+    camera_grid_to_screen_f(cam, gx1, gy1, &x1, &y1);
     SDL_Rect r = {
         x0 < x1 ? x0 : x1, y0 < y1 ? y0 : y1,
         (x0 < x1 ? x1 - x0 : x0 - x1), (y0 < y1 ? y1 - y0 : y0 - y1),

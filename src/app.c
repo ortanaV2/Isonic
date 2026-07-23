@@ -41,10 +41,10 @@ static void app_reset_transient_state(App *app) {
     app->panning = 0;
 
     app->marquee_active = 0;
-    app->marquee_start_mx = 0;
-    app->marquee_start_my = 0;
-    app->marquee_cur_mx = 0;
-    app->marquee_cur_my = 0;
+    app->marquee_start_gx = 0.0f;
+    app->marquee_start_gy = 0.0f;
+    app->marquee_cur_gx = 0.0f;
+    app->marquee_cur_gy = 0.0f;
 
     app->section_dragging = 0;
     app->canvas_edit_kind = CANVAS_EDIT_NONE;
@@ -511,8 +511,8 @@ void app_render(App *app, SDL_Renderer *renderer) {
     }
 
     if (app->marquee_active) {
-        render_marquee_select(renderer, app->marquee_start_mx, app->marquee_start_my,
-                               app->marquee_cur_mx, app->marquee_cur_my);
+        render_marquee_select(renderer, &app->camera, app->marquee_start_gx, app->marquee_start_gy,
+                               app->marquee_cur_gx, app->marquee_cur_gy);
     }
 
     if (app->section_dragging) {

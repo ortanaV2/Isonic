@@ -14,6 +14,12 @@ void camera_init(Camera *cam);
 float camera_cell_px(const Camera *cam);
 
 void camera_grid_to_screen(const Camera *cam, int gx, int gy, int *sx, int *sy);
+/* Same as camera_grid_to_screen but for an unrounded float grid position -
+   the mirror image of camera_screen_to_grid_f, for re-deriving a screen
+   point every frame from a grid position that was fixed once (e.g. a
+   marquee-select corner) instead of from a stale screen pixel that a
+   mid-drag zoom would silently reinterpret as a different grid point. */
+void camera_grid_to_screen_f(const Camera *cam, float gx, float gy, int *sx, int *sy);
 /* Rounds to the nearest grid lattice point - for snapping wire endpoints,
    pins, and drag anchors, all of which live at grid vertices. */
 void camera_screen_to_grid(const Camera *cam, int sx, int sy, int *gx, int *gy);

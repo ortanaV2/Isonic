@@ -980,8 +980,9 @@ static void begin_wire_node_drag(App *app, int node_x, int node_y, int gx, int g
 static void begin_marquee_select(App *app, int mx, int my) {
     clear_selection(app);
     app->marquee_active = 1;
-    app->marquee_start_mx = app->marquee_cur_mx = mx;
-    app->marquee_start_my = app->marquee_cur_my = my;
+    camera_screen_to_grid_f(&app->camera, mx, my, &app->marquee_start_gx, &app->marquee_start_gy);
+    app->marquee_cur_gx = app->marquee_start_gx;
+    app->marquee_cur_gy = app->marquee_start_gy;
 }
 
 /* Recomputes which components/wires/sections/text labels are enclosed by
@@ -1005,11 +1006,10 @@ static void update_marquee_selection(App *app) {
     for (int i = 0; i < circuit->section_high_water; i++) circuit->sections[i].selected = 0;
     for (int i = 0; i < circuit->text_label_high_water; i++) circuit->text_labels[i].selected = 0;
 
-    if (app->marquee_start_mx == app->marquee_cur_mx && app->marquee_start_my == app->marquee_cur_my) return;
+    if (app->marquee_start_gx == app->marquee_cur_gx && app->marquee_start_gy == app->marquee_cur_gy) return;
 
-    float gx0, gy0, gx1, gy1;
-    camera_screen_to_grid_f(&app->camera, app->marquee_start_mx, app->marquee_start_my, &gx0, &gy0);
-    camera_screen_to_grid_f(&app->camera, app->marquee_cur_mx, app->marquee_cur_my, &gx1, &gy1);
+    float gx0 = app->marquee_start_gx, gy0 = app->marquee_start_gy;
+    float gx1 = app->marquee_cur_gx, gy1 = app->marquee_cur_gy;
     float min_x = gx0 < gx1 ? gx0 : gx1, max_x = gx0 > gx1 ? gx0 : gx1;
     float min_y = gy0 < gy1 ? gy0 : gy1, max_y = gy0 > gy1 ? gy0 : gy1;
 
@@ -1899,8 +1899,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
                                        &app->wire_cursor_gx, &app->wire_cursor_gy);
             }
             if (app->marquee_active) {
-                app->marquee_cur_mx = event->motion.x;
-                app->marquee_cur_my = event->motion.y;
+                camera_screen_to_grid_f(&app->camera, event->motion.x, event->motion.y,
+                                        &app->marquee_cur_gx, &app->marquee_cur_gy);
                 update_marquee_selection(app);
             }
             if (app->section_dragging) {

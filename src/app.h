@@ -218,13 +218,21 @@ typedef struct {
     /* rubber-band multi-select: a Select-mode left-drag started over empty
        space (no node/component/wire under the cursor) draws a box, and on
        release every component/wire fully enclosed by it - not merely touched
-       - gets marked .selected, same as Windows Explorer. Screen pixels, not
-       grid coords: the box is a pure screen-space overlay, so it's simplest
-       to keep it in the same space it's drawn in and only convert to grid
-       space once, at release, for the containment test. */
+       - gets marked .selected, same as Windows Explorer. Both corners are
+       converted to (unrounded, float) grid coordinates once each - start at
+       button-down, cur again on every following motion event - same reasoning
+       as TOOL_SECTION's own section_drag_start_gx/gy above: keeping the start
+       corner as a raw screen pixel instead used to mean any zoom mid-drag
+       (which shifts pan_x/pan_y to keep the CURSOR anchored, not that
+       unrelated pixel) silently reinterpreted it as a different grid point
+       every time update_marquee_selection re-derived it, making the box's
+       start corner visibly drift on the grid despite the mouse never having
+       moved there. Float, not int, unlike the section drag - the marquee's
+       containment test (update_marquee_selection) needs sub-cell precision,
+       not snapping to a lattice point. */
     int marquee_active;
-    int marquee_start_mx, marquee_start_my;
-    int marquee_cur_mx, marquee_cur_my;
+    float marquee_start_gx, marquee_start_gy;
+    float marquee_cur_gx, marquee_cur_gy;
 
     /* TOOL_SECTION drag-to-draw, started on a left-button-down while
        TOOL_SECTION is active anywhere on the canvas (no node/component/wire

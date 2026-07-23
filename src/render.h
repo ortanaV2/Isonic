@@ -59,8 +59,12 @@ void render_ic_ghost(SDL_Renderer *renderer, TTF_Font *font_large, const Camera 
 void render_via_placement_preview(SDL_Renderer *renderer, const Camera *cam, int x, int y, int valid);
 
 /* Rubber-band selection box, shown while a Select-mode marquee drag is in
-   progress (see app->marquee_active). Screen-space corners, any order. */
-void render_marquee_select(SDL_Renderer *renderer, int x0, int y0, int x1, int y1);
+   progress (see app->marquee_active). gx0/gy0/gx1/gy1 are float grid
+   coordinates (any order) re-derived to screen space here every frame via
+   the current camera - not raw screen pixels - so the box stays anchored to
+   the same grid points if the camera zooms mid-drag, instead of drifting
+   (see app.h's marquee_start_gx comment). */
+void render_marquee_select(SDL_Renderer *renderer, const Camera *cam, float gx0, float gy0, float gx1, float gy1);
 
 /* Screen-space bounding box of an INPUT/OUTPUT wire's H/L label, shared by
    rendering and click hit-testing so the clickable area always exactly
