@@ -43,6 +43,7 @@ typedef enum {
     MENU_CAT_TIMERS,
     MENU_CAT_MEMORY,
     MENU_CAT_ARITHMETIC,
+    MENU_CAT_OBSOLETE, /* parts replaced by a newer catalog entry (see taskbar.c) - kept placeable for existing schematics, just out of the way of the current recommendation */
     MENU_CAT_COUNT
 } MenuCategory;
 

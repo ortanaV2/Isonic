@@ -106,7 +106,7 @@ Wire, Via, Input, Output). The **Components** button opens a categorized,
 fold-up parts menu — click a category to expand it, then click a part to
 start placing it:
 
-- **Logic Gates** — AND (SN74HC08N), OR (SN74HC32N), NOT (CD74HC04E),
+- **Logic Gates** — AND (SN74HC08N), OR (SN74HC32N), NOT (SN74HC540N),
   NAND (SN74HC00N), NOR (SN74HC02N), XOR (SN74HC86N)
 - **Multiplexers** — 8:1 MUX (SN74HC151N), Dual 4:1 MUX (SN74HC153N)
 - **Demultiplexers** — 1:8 DEMUX (CD74HCT238E), Dual 1:4 DEMUX (CD4555BE)
@@ -116,6 +116,7 @@ start placing it:
 - **Timers** — Timer (TLC555)
 - **Memory** — EEPROM (AT28C64B-15PU)
 - **Arithmetic** — 4-Bit Adder (CD74HC283E)
+- **Obsolete** — NOT (CD74HC04E, superseded by SN74HC540N above)
 
 ### Taskbar
 
