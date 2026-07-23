@@ -29,6 +29,12 @@
 
 #define WINDOW_W 1280
 #define WINDOW_H 800
+/* Floor enforced by the OS window manager itself (SDL_SetWindowMinimumSize
+   below) - below this, the taskbar's own buttons start running out of room
+   and the docked panels (Layers, Manage Data, Settings) have nowhere sane
+   left to lay out. */
+#define WINDOW_MIN_W 800
+#define WINDOW_MIN_H 600
 #define TARGET_FRAME_MS 16
 
 /* Everything is drawn into an offscreen texture at SSAA_SCALE times the
@@ -176,6 +182,7 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+    SDL_SetWindowMinimumSize(window, WINDOW_MIN_W, WINDOW_MIN_H);
 
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (renderer == NULL) {
