@@ -20,7 +20,7 @@ directly all make Isonic a schematic-design foundation for PCB development,
 pairing schematic entry with the groundwork for PCB layout and routing in one
 tool.
 
-## [Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.3.0/isonic-windows-x64-v1.3.0.zip)
+## [Download latest Windows release](https://github.com/ortanaV2/Isonic/releases/download/v1.3.1/isonic-windows-x64-v1.3.1.zip)
 <details>
 <summary><strong>Manual download</strong></summary>
 
