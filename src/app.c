@@ -105,17 +105,20 @@ static void app_update_window_title(App *app) {
     SDL_SetWindowTitle(app->window, title);
 }
 
-void app_init(App *app, int window_w, int window_h, SDL_Window *window) {
+void app_init(App *app, int window_w, int window_h, float ui_scale, SDL_Window *window) {
     app->window = window;
+    app->ui_scale = ui_scale;
     circuit_init(&app->circuit);
     camera_init(&app->camera);
     taskbar_init(&app->taskbar);
     taskbar_layout(&app->taskbar, window_w);
-    app->font = text_util_load_font(14);
+    app->font = text_util_load_font(14, ui_scale);
     /* loaded much larger than its display size (see label_scale in render.c)
        so zoomed-in IC pin labels stay crisp instead of blurring from bitmap
-       upscaling - only used for those, everything else uses the regular font */
-    app->font_large = text_util_load_font(96); /* keep in sync with LABEL_FONT_POINT_SIZE in render.c */
+       upscaling - only used for those, everything else uses the regular font.
+       Its own oversample ratio is fixed and zoom-driven, unrelated to DPI, so
+       display_scale is always 1.0 here regardless of ui_scale. */
+    app->font_large = text_util_load_font(96, 1.0f); /* keep in sync with LABEL_FONT_POINT_SIZE in render.c */
 
     app->window_w = window_w;
     app->window_h = window_h;
@@ -380,7 +383,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
     SDL_RenderClear(renderer);
 
     int hover_mx, hover_my;
-    SDL_GetMouseState(&hover_mx, &hover_my);
+    app_get_mouse_state(app, &hover_mx, &hover_my);
 
     /* While the Settings modal is open, the cursor must have zero effect on
        anything behind it - not just clicks (already gated in
@@ -421,7 +424,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
                underneath it as the cursor crosses components would just be
                confusing noise */
             int mx, my;
-            SDL_GetMouseState(&mx, &my);
+            app_get_mouse_state(app, &mx, &my);
             if (my >= TASKBAR_HEIGHT) {
                 find_hover_target_at(app, mx, my, &snap_component_a, &snap_wire_a);
             }
@@ -462,7 +465,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
     const IC_Def *pending_ic = app_pending_place_ic(app);
     if (pending_ic != NULL) {
         int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        app_get_mouse_state(app, &mx, &my);
         /* suppressed while the cursor is over the taskbar strip, the (if
            open) Components dropdown, or the (if open) Manage Data panel -
            seeing the placement ghost peek out from behind either looks like
@@ -481,7 +484,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
 
     if (app->pasting && !clipboard_is_single_ic(app)) {
         int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        app_get_mouse_state(app, &mx, &my);
         /* same suppression the single-IC ghost above uses - see its own
            comment */
         if (!taskbar_covers_point(&app->taskbar, mx, my) && !data_editor_covers_point(&app->data_editor, mx, my) &&
@@ -494,7 +497,7 @@ void app_render(App *app, SDL_Renderer *renderer) {
 
     if (app->active_tool == TOOL_VIA) {
         int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        app_get_mouse_state(app, &mx, &my);
         if (my >= TASKBAR_HEIGHT && !taskbar_covers_point(&app->taskbar, mx, my) &&
             !data_editor_covers_point(&app->data_editor, mx, my) &&
             !layer_panel_covers_point(&app->layer_panel, mx, my) &&

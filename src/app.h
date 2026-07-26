@@ -1,6 +1,7 @@
 #ifndef ISONIC_APP_H
 #define ISONIC_APP_H
 
+#include <math.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include "circuit.h"
@@ -154,6 +155,13 @@ typedef struct {
     const char *place_ic_name;
 
     int window_w, window_h;
+    /* physical-pixels-per-logical-pixel for the monitor the window opened on
+       (1.0 at 100% Windows scaling) - see main.c's DPI-awareness setup.
+       window_w/window_h and every UI layout constant across taskbar.c/
+       settings_panel.c/layer_panel.c/data_editor.c stay in logical pixels;
+       only text_util.c's font rendering and raw mouse-event coordinates
+       (see app_get_mouse_state, input_handler.c) need to know this factor. */
+    float ui_scale;
     int running;
 
     /* selection (mutually exclusive) */
@@ -358,8 +366,19 @@ typedef struct {
     Uint32 last_autosave_tick;
 } App;
 
-void app_init(App *app, int window_w, int window_h, SDL_Window *window);
+void app_init(App *app, int window_w, int window_h, float ui_scale, SDL_Window *window);
 void app_shutdown(App *app);
+
+/* SDL_GetMouseState, corrected from physical screen pixels down to the
+   logical pixel space every UI rect/constant is authored in (see ui_scale
+   above) - use this instead of calling SDL_GetMouseState directly anywhere
+   the result feeds hit-testing, camera_screen_to_grid, etc. */
+static inline void app_get_mouse_state(const App *app, int *out_x, int *out_y) {
+    int x, y;
+    SDL_GetMouseState(&x, &y);
+    *out_x = (int)lroundf(x / app->ui_scale);
+    *out_y = (int)lroundf(y / app->ui_scale);
+}
 
 /* Defined in input_handler.c */
 void app_handle_event(App *app, const SDL_Event *event);

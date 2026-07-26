@@ -297,7 +297,7 @@ void settings_panel_render(SDL_Renderer *renderer, TTF_Font *font, SettingsPanel
         SDL_SetRenderDrawColor(renderer, BORDER_COLOR.r, BORDER_COLOR.g, BORDER_COLOR.b, 255);
         SDL_RenderDrawRect(renderer, &box);
         if (font != NULL) {
-            const char *label = capturing ? "Press a key..." : SDL_GetScancodeName(sp->working.keybind[i]);
+            const char *label = capturing ? "Press a key..." : SDL_GetKeyName(sp->working.keybind[i]);
             int tw = 0, th = 0;
             text_util_measure(font, label, &tw, &th);
             SDL_Color label_col = capturing ? TEXT_COLOR : DIM_TEXT_COLOR;
@@ -423,42 +423,42 @@ void settings_panel_text_input(SettingsPanel *sp, const char *text) {
     }
 }
 
-void settings_panel_handle_key(SettingsPanel *sp, SDL_Scancode sc) {
+void settings_panel_handle_key(SettingsPanel *sp, SDL_Keycode key) {
     if (sp->capturing_action != -1) {
-        if (sc == SDL_SCANCODE_ESCAPE) {
+        if (key == SDLK_ESCAPE) {
             sp->capturing_action = -1;
             return;
         }
         /* bare modifier presses aren't usable single-key bindings on their
            own - ignore them so reaching for e.g. a Ctrl+key chord doesn't
            "capture" as just Ctrl the instant the box opens. */
-        if (sc == SDL_SCANCODE_LCTRL || sc == SDL_SCANCODE_RCTRL ||
-            sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT ||
-            sc == SDL_SCANCODE_LALT || sc == SDL_SCANCODE_RALT) {
+        if (key == SDLK_LCTRL || key == SDLK_RCTRL ||
+            key == SDLK_LSHIFT || key == SDLK_RSHIFT ||
+            key == SDLK_LALT || key == SDLK_RALT) {
             return;
         }
         int action = sp->capturing_action;
         for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
-            if (i != action && sp->working.keybind[i] == sc) {
+            if (i != action && sp->working.keybind[i] == key) {
                 sp->working.keybind[i] = sp->working.keybind[action]; /* swap */
                 break;
             }
         }
-        sp->working.keybind[action] = sc;
+        sp->working.keybind[action] = key;
         sp->capturing_action = -1;
         return;
     }
 
     if (sp->autosave_editing) {
-        if (sc == SDL_SCANCODE_BACKSPACE) {
+        if (key == SDLK_BACKSPACE) {
             if (sp->autosave_edit_len > 0) {
                 sp->autosave_edit_len--;
                 sp->autosave_edit_buf[sp->autosave_edit_len] = '\0';
             }
-        } else if (sc == SDL_SCANCODE_ESCAPE) {
+        } else if (key == SDLK_ESCAPE) {
             sp->autosave_editing = 0;
             SDL_StopTextInput();
-        } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
+        } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
             commit_autosave_field(sp);
         }
         /* every other key (digits arrive via settings_panel_text_input) is swallowed */

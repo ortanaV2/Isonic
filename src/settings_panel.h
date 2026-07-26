@@ -88,10 +88,11 @@ int settings_panel_is_capturing_key(const SettingsPanel *sp);
    non-digit characters are silently dropped. */
 void settings_panel_text_input(SettingsPanel *sp, const char *text);
 /* Routes SDL_KEYDOWN while capturing a keybind or editing the autosave
-   field. A captured scancode rebinds that action, swapping with whatever
+   field. A captured keycode rebinds that action, swapping with whatever
    other action previously held that key (if any); Escape cancels either
    without changing anything; Enter/Backspace behave like layer_panel's own
-   rename field for the autosave box. */
-void settings_panel_handle_key(SettingsPanel *sp, SDL_Scancode sc);
+   rename field for the autosave box. Takes event->key.keysym.sym (not
+   .scancode) - see keybind's own comment in settings.h for why. */
+void settings_panel_handle_key(SettingsPanel *sp, SDL_Keycode key);
 
 #endif

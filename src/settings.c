@@ -28,22 +28,22 @@ void settings_defaults(Settings *settings) {
     settings->diag_chips_enabled = 1;
     settings->diag_hover_enabled = 1;
     settings->wire_drag_detach = 0;
-    settings->keybind[KEYBIND_SELECT] = SDL_SCANCODE_SPACE;
-    settings->keybind[KEYBIND_WIRE] = SDL_SCANCODE_W;
+    settings->keybind[KEYBIND_SELECT] = SDLK_SPACE;
+    settings->keybind[KEYBIND_WIRE] = SDLK_w;
     /* was V - collided with Ctrl+V once Paste got its own keybind below
        (the plain-key checks never excluded Ctrl, so Ctrl+V would also
        switch to the Via tool as a side effect - see input_handler.c's
        Ctrl-guards on every plain tool-switch key, added at the same time). */
-    settings->keybind[KEYBIND_VIA] = SDL_SCANCODE_F;
-    settings->keybind[KEYBIND_INPUT] = SDL_SCANCODE_Q;
-    settings->keybind[KEYBIND_OUTPUT] = SDL_SCANCODE_E;
-    settings->keybind[KEYBIND_TEXT_LABEL] = SDL_SCANCODE_T;
-    settings->keybind[KEYBIND_COPY] = SDL_SCANCODE_C;
-    settings->keybind[KEYBIND_PASTE] = SDL_SCANCODE_V;
-    settings->keybind[KEYBIND_UNDO] = SDL_SCANCODE_Z;
-    settings->keybind[KEYBIND_REDO] = SDL_SCANCODE_Y;
-    settings->keybind[KEYBIND_ROTATE] = SDL_SCANCODE_R;
-    settings->keybind[KEYBIND_SAVE] = SDL_SCANCODE_S;
+    settings->keybind[KEYBIND_VIA] = SDLK_f;
+    settings->keybind[KEYBIND_INPUT] = SDLK_q;
+    settings->keybind[KEYBIND_OUTPUT] = SDLK_e;
+    settings->keybind[KEYBIND_TEXT_LABEL] = SDLK_t;
+    settings->keybind[KEYBIND_COPY] = SDLK_c;
+    settings->keybind[KEYBIND_PASTE] = SDLK_v;
+    settings->keybind[KEYBIND_UNDO] = SDLK_z;
+    settings->keybind[KEYBIND_REDO] = SDLK_y;
+    settings->keybind[KEYBIND_ROTATE] = SDLK_r;
+    settings->keybind[KEYBIND_SAVE] = SDLK_s;
 }
 
 void settings_load(Settings *settings) {
@@ -59,6 +59,15 @@ void settings_load(Settings *settings) {
         fclose(f);
         return; /* not a recognizable settings file - keep defaults, don't half-apply garbage */
     }
+    /* format version 1 stored keybind[] as SDL_Scancode (physical key
+       position); version 2 switched to SDL_Keycode (produced character) to
+       fix Undo/Redo swapping on QWERTZ layouts - see settings.h. A v1 file's
+       raw ints would silently be reinterpreted as the wrong keycodes if
+       loaded here, so keybind_* keys below are only honored from v2+; a v1
+       file keeps the (correct, keycode-based) settings_defaults() already
+       set above for every keybind, same as a first run. */
+    int file_version = 0;
+    sscanf(line, "ISONIC_SETTINGS %d", &file_version);
 
     while (kv_next_line(f, line, sizeof(line))) {
         char key[64], val[256];
@@ -74,10 +83,10 @@ void settings_load(Settings *settings) {
             settings->diag_hover_enabled = atoi(val);
         } else if (strcmp(key, "wire_drag_detach") == 0) {
             settings->wire_drag_detach = atoi(val);
-        } else {
+        } else if (file_version >= 2) {
             for (int i = 0; i < KEYBIND_ACTION_COUNT; i++) {
                 if (strcmp(key, k_action_keys[i]) == 0) {
-                    settings->keybind[i] = (SDL_Scancode)atoi(val);
+                    settings->keybind[i] = (SDL_Keycode)atoi(val);
                     break;
                 }
             }
@@ -92,7 +101,7 @@ int settings_save(const Settings *settings) {
     FILE *f = fopen(path, "w");
     if (f == NULL) return 0;
 
-    kv_write_line(f, "ISONIC_SETTINGS 1");
+    kv_write_line(f, "ISONIC_SETTINGS 2");
 
     char line[128];
     snprintf(line, sizeof(line), "autosave_minutes=%d", settings->autosave_minutes);

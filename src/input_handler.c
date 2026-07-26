@@ -1234,7 +1234,7 @@ static void copy_selection(App *app) {
 
     if (!have_selection) {
         int mx, my;
-        SDL_GetMouseState(&mx, &my);
+        app_get_mouse_state(app, &mx, &my);
         if (my >= TASKBAR_HEIGHT) {
             int box_gx, box_gy;
             camera_screen_to_grid_floor(&app->camera, mx, my, &box_gx, &box_gy);
@@ -1778,15 +1778,18 @@ void app_handle_event(App *app, const SDL_Event *event) {
         case SDL_WINDOWEVENT:
             if (event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
                 event->window.event == SDL_WINDOWEVENT_RESIZED) {
-                app->window_w = event->window.data1;
-                app->window_h = event->window.data2;
+                /* SDL reports resize events in physical screen pixels - see
+                   ui_scale in app.h for why every other consumer of
+                   window_w/window_h expects logical pixels instead. */
+                app->window_w = (int)lroundf(event->window.data1 / app->ui_scale);
+                app->window_h = (int)lroundf(event->window.data2 / app->ui_scale);
                 taskbar_layout(&app->taskbar, app->window_w);
             }
             break;
 
         case SDL_MOUSEWHEEL: {
             int mx, my;
-            SDL_GetMouseState(&mx, &my);
+            app_get_mouse_state(app, &mx, &my);
             if (settings_panel_covers_point(&app->settings_panel, mx, my)) break;
             if (!data_editor_handle_wheel(&app->data_editor, mx, my, event->wheel.y)) {
                 camera_zoom_at(&app->camera, mx, my, event->wheel.y);
@@ -1795,7 +1798,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
         }
 
         case SDL_MOUSEBUTTONDOWN: {
-            int mx = event->button.x, my = event->button.y;
+            int mx = (int)lroundf(event->button.x / app->ui_scale);
+            int my = (int)lroundf(event->button.y / app->ui_scale);
             /* mouse "back"/"forward" side buttons (X1/X2 - e.g. a Razer
                DeathAdder's two thumb buttons) act as undo/redo globally,
                same as the keyboard shortcuts - not gated by taskbar/panel
@@ -1874,7 +1878,8 @@ void app_handle_event(App *app, const SDL_Event *event) {
         }
 
         case SDL_MOUSEBUTTONUP: {
-            int mx = event->button.x, my = event->button.y;
+            int mx = (int)lroundf(event->button.x / app->ui_scale);
+            int my = (int)lroundf(event->button.y / app->ui_scale);
             int gx, gy;
             camera_screen_to_grid(&app->camera, mx, my, &gx, &gy);
             if (event->button.button == SDL_BUTTON_LEFT) {
@@ -1890,26 +1895,33 @@ void app_handle_event(App *app, const SDL_Event *event) {
         }
 
         case SDL_MOUSEMOTION: {
-            data_editor_handle_motion(&app->data_editor, event->motion.y);
+            /* motion.x/y/xrel/yrel are physical screen pixels - see ui_scale
+               in app.h - so every consumer below needs the logical-space
+               equivalents instead of the raw event fields. */
+            int mmx = (int)lroundf(event->motion.x / app->ui_scale);
+            int mmy = (int)lroundf(event->motion.y / app->ui_scale);
+            int mmxrel = (int)lroundf(event->motion.xrel / app->ui_scale);
+            int mmyrel = (int)lroundf(event->motion.yrel / app->ui_scale);
+            data_editor_handle_motion(&app->data_editor, mmy);
             if (app->panning) {
-                camera_pan(&app->camera, event->motion.xrel, event->motion.yrel);
+                camera_pan(&app->camera, mmxrel, mmyrel);
             }
             if (app->wiring) {
-                camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y,
+                camera_screen_to_grid(&app->camera, mmx, mmy,
                                        &app->wire_cursor_gx, &app->wire_cursor_gy);
             }
             if (app->marquee_active) {
-                camera_screen_to_grid_f(&app->camera, event->motion.x, event->motion.y,
+                camera_screen_to_grid_f(&app->camera, mmx, mmy,
                                         &app->marquee_cur_gx, &app->marquee_cur_gy);
                 update_marquee_selection(app);
             }
             if (app->section_dragging) {
-                camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y,
+                camera_screen_to_grid(&app->camera, mmx, mmy,
                                        &app->section_drag_cur_gx, &app->section_drag_cur_gy);
             }
             if (app->drag_kind != DRAG_NONE) {
                 int gx, gy;
-                camera_screen_to_grid(&app->camera, event->motion.x, event->motion.y, &gx, &gy);
+                camera_screen_to_grid(&app->camera, mmx, mmy, &gx, &gy);
                 int dx = gx - app->drag_last_gx;
                 int dy = gy - app->drag_last_gy;
                 if (dx != 0 || dy != 0) {
@@ -2015,13 +2027,20 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_KEYDOWN: {
             SDL_Scancode sc = event->key.keysym.scancode;
+            /* the rebindable actions below (tool switches, Copy/Paste/Undo/
+               Redo/Rotate/Save) are letter mnemonics, so they're matched by
+               the character produced (keycode) rather than physical key
+               position (scancode) - see keybind's own comment in settings.h.
+               Everything else in this handler (Escape/Backspace/arrows/digit
+               row/modifier chords) is positional and keeps using sc. */
+            SDL_Keycode key = event->key.keysym.sym;
 
             /* a keybind capture or the Settings autosave field owns every
                key while active - it must be checked before anything else
                below, including layer_panel's own editing gate, the same way
                a modal takes priority over the canvas in handle_escape. */
             if (settings_panel_is_capturing_key(&app->settings_panel)) {
-                settings_panel_handle_key(&app->settings_panel, sc);
+                settings_panel_handle_key(&app->settings_panel, key);
                 break;
             }
             /* the popup is still a modal even when idle (not currently
@@ -2097,19 +2116,19 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 handle_escape(app);
-            } else if (sc == app->settings.keybind[KEYBIND_WIRE] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_WIRE] && no_ctrl) {
                 set_active_tool(app, TOOL_WIRE);
-            } else if (sc == app->settings.keybind[KEYBIND_VIA] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_VIA] && no_ctrl) {
                 set_active_tool(app, TOOL_VIA);
-            } else if (sc == app->settings.keybind[KEYBIND_SELECT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_SELECT] && no_ctrl) {
                 set_active_tool(app, TOOL_SELECT);
-            } else if (sc == app->settings.keybind[KEYBIND_INPUT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_INPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_INPUT);
-            } else if (sc == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_OUTPUT);
-            } else if (sc == app->settings.keybind[KEYBIND_TEXT_LABEL] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_TEXT_LABEL] && no_ctrl) {
                 set_active_tool(app, TOOL_TEXT_LABEL);
-            } else if (sc == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
+            } else if (key == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
                 /* only meaningful while a placement (Components-menu pick or
                    Ctrl+C paste) is actually pending - see place_rotation in
                    app.h. Not a structural edit itself (nothing's been placed
@@ -2124,16 +2143,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 if (pos < app->circuit.layer_order_count) {
                     app->active_layer_slot = app->circuit.layer_order[pos];
                 }
-            } else if (sc == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
                 copy_selection(app);
-            } else if (sc == app->settings.keybind[KEYBIND_PASTE] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_PASTE] && (event->key.keysym.mod & KMOD_CTRL)) {
                 paste_clipboard(app);
-            } else if (sc == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+<undo key> */
                 else perform_undo(app);
-            } else if (sc == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 perform_redo(app);
-            } else if (sc == app->settings.keybind[KEYBIND_SAVE] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_SAVE] && (event->key.keysym.mod & KMOD_CTRL)) {
                 app_save_current(app); /* same fall-through-to-Save-As-if-untitled behavior as the File menu's own Save */
             } else if ((sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) && !event->key.repeat) {
                 app->shift_held = 1;
