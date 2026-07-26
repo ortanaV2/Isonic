@@ -2027,13 +2027,20 @@ void app_handle_event(App *app, const SDL_Event *event) {
 
         case SDL_KEYDOWN: {
             SDL_Scancode sc = event->key.keysym.scancode;
+            /* the rebindable actions below (tool switches, Copy/Paste/Undo/
+               Redo/Rotate/Save) are letter mnemonics, so they're matched by
+               the character produced (keycode) rather than physical key
+               position (scancode) - see keybind's own comment in settings.h.
+               Everything else in this handler (Escape/Backspace/arrows/digit
+               row/modifier chords) is positional and keeps using sc. */
+            SDL_Keycode key = event->key.keysym.sym;
 
             /* a keybind capture or the Settings autosave field owns every
                key while active - it must be checked before anything else
                below, including layer_panel's own editing gate, the same way
                a modal takes priority over the canvas in handle_escape. */
             if (settings_panel_is_capturing_key(&app->settings_panel)) {
-                settings_panel_handle_key(&app->settings_panel, sc);
+                settings_panel_handle_key(&app->settings_panel, key);
                 break;
             }
             /* the popup is still a modal even when idle (not currently
@@ -2109,19 +2116,19 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 delete_selection(app);
             } else if (sc == SDL_SCANCODE_ESCAPE) {
                 handle_escape(app);
-            } else if (sc == app->settings.keybind[KEYBIND_WIRE] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_WIRE] && no_ctrl) {
                 set_active_tool(app, TOOL_WIRE);
-            } else if (sc == app->settings.keybind[KEYBIND_VIA] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_VIA] && no_ctrl) {
                 set_active_tool(app, TOOL_VIA);
-            } else if (sc == app->settings.keybind[KEYBIND_SELECT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_SELECT] && no_ctrl) {
                 set_active_tool(app, TOOL_SELECT);
-            } else if (sc == app->settings.keybind[KEYBIND_INPUT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_INPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_INPUT);
-            } else if (sc == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_OUTPUT] && no_ctrl) {
                 set_active_tool(app, TOOL_OUTPUT);
-            } else if (sc == app->settings.keybind[KEYBIND_TEXT_LABEL] && no_ctrl) {
+            } else if (key == app->settings.keybind[KEYBIND_TEXT_LABEL] && no_ctrl) {
                 set_active_tool(app, TOOL_TEXT_LABEL);
-            } else if (sc == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
+            } else if (key == app->settings.keybind[KEYBIND_ROTATE] && app_pending_place_ic(app) != NULL) {
                 /* only meaningful while a placement (Components-menu pick or
                    Ctrl+C paste) is actually pending - see place_rotation in
                    app.h. Not a structural edit itself (nothing's been placed
@@ -2136,16 +2143,16 @@ void app_handle_event(App *app, const SDL_Event *event) {
                 if (pos < app->circuit.layer_order_count) {
                     app->active_layer_slot = app->circuit.layer_order[pos];
                 }
-            } else if (sc == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_COPY] && (event->key.keysym.mod & KMOD_CTRL)) {
                 copy_selection(app);
-            } else if (sc == app->settings.keybind[KEYBIND_PASTE] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_PASTE] && (event->key.keysym.mod & KMOD_CTRL)) {
                 paste_clipboard(app);
-            } else if (sc == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_UNDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 if (event->key.keysym.mod & KMOD_SHIFT) perform_redo(app); /* Ctrl+Shift+<undo key> */
                 else perform_undo(app);
-            } else if (sc == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_REDO] && (event->key.keysym.mod & KMOD_CTRL)) {
                 perform_redo(app);
-            } else if (sc == app->settings.keybind[KEYBIND_SAVE] && (event->key.keysym.mod & KMOD_CTRL)) {
+            } else if (key == app->settings.keybind[KEYBIND_SAVE] && (event->key.keysym.mod & KMOD_CTRL)) {
                 app_save_current(app); /* same fall-through-to-Save-As-if-untitled behavior as the File menu's own Save */
             } else if ((sc == SDL_SCANCODE_LSHIFT || sc == SDL_SCANCODE_RSHIFT) && !event->key.repeat) {
                 app->shift_held = 1;

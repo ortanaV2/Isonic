@@ -46,13 +46,20 @@ typedef struct {
                                      behind at its old position - "unplugging" the connection
                                      instead of stretching it. See snapshot_drag_attachments in
                                      input_handler.c, the single choke point this gates. */
-    SDL_Scancode keybind[KEYBIND_ACTION_COUNT];
+    /* SDL_Keycode, not SDL_Scancode - these are letter mnemonics (Undo=Z,
+       Wire=W, ...), so they must follow the character the user's actual
+       keyboard layout produces, not a physical key position. A scancode is
+       layout-independent (based on the US QWERTY reference), which silently
+       swaps Undo/Redo on any QWERTZ (German/Swiss) layout, where Y and Z
+       physically trade places relative to QWERTY - Settings would keep
+       showing "Ctrl+Z" while the key that produces "Z" no longer matched. */
+    SDL_Keycode keybind[KEYBIND_ACTION_COUNT];
 } Settings;
 
 /* Row label for the Settings popup's Keybind section, e.g. "Wire Tool". */
 const char *keybind_action_label(KeybindAction action);
 
-/* Today's hardcoded scancodes (W/F/Space/Q/E/Ctrl+C/Ctrl+V/Ctrl+Z/Ctrl+Y/R/
+/* Today's hardcoded keycodes (W/F/Space/Q/E/Ctrl+C/Ctrl+V/Ctrl+Z/Ctrl+Y/R/
    Ctrl+S/T), autosave off, Layers panel on the right - a user who never opens
    Settings sees zero behavior change from before this feature existed. */
 void settings_defaults(Settings *settings);
