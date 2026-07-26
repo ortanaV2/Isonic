@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #ifdef _WIN32
@@ -49,6 +50,59 @@ static SDL_Texture *create_scene_target(SDL_Renderer *renderer, int window_w, in
 }
 
 #ifdef _WIN32
+/* Without opting in, Windows treats the process as DPI-unaware: it lets the
+   app render at a fixed 96-DPI-worth of pixels, then has DWM bitmap-stretch
+   that whole framebuffer up to match the monitor's actual scaling. That
+   stretch is a blur applied uniformly to the entire window - barely visible
+   on the schematic canvas (flat fills, thick lines, and already its own
+   oversample-then-downscale AA pass, see SSAA_SCALE/LABEL_FONT_POINT_SIZE
+   below/in render.c) but very visible on the taskbar/panels' small text,
+   which had no such margin. Declaring PER_MONITOR_AWARE_V2 here - before
+   SDL_Init/SDL_CreateWindow, since it only affects windows created after the
+   opt-in - makes Windows hand the app real device pixels instead, at the
+   cost of the app then being responsible for scaling itself (see ui_scale
+   throughout main.c/app.h/text_util.c). DPI_AWARENESS_CONTEXT and its
+   PER_MONITOR_AWARE_V2 value are Windows 10 1607+ SDK additions that an
+   older mingw toolchain's headers may not declare - defined defensively here
+   the same way, same reasoning as the dark-titlebar attribute below. */
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+typedef HANDLE DPI_AWARENESS_CONTEXT;
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4)
+#endif
+typedef BOOL(WINAPI *SetProcessDpiAwarenessContextFn)(DPI_AWARENESS_CONTEXT);
+
+static void enable_dpi_awareness(void) {
+    HMODULE user32 = LoadLibraryExW(L"user32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (user32 == NULL) return;
+    SetProcessDpiAwarenessContextFn SetProcessDpiAwarenessContext_ =
+        (SetProcessDpiAwarenessContextFn)(void *)GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+    if (SetProcessDpiAwarenessContext_ != NULL) {
+        SetProcessDpiAwarenessContext_(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    } else {
+        /* Windows 7/8.1 fallback - no per-monitor granularity, but still
+           opts out of the blanket bitmap-stretch this exists to avoid. */
+        SetProcessDPIAware();
+    }
+    FreeLibrary(user32);
+}
+
+/* GetDeviceCaps(..., LOGPIXELSX) is the old (Vista-era, always-available)
+   way to ask "how many pixels per logical inch" - unlike the newer
+   Get­DpiForWindow/GetDpiForSystem, it needs no dynamic GetProcAddress
+   lookup, and it already reflects the calling thread's DPI-awareness mode
+   set by enable_dpi_awareness above (96 = no scaling, 144 = 150%, etc.).
+   Queried against the whole desktop rather than a specific window/monitor,
+   since the window doesn't exist yet at the point this is called (its
+   initial size already needs to be right) - see fix/win11 for why per-
+   monitor changes after launch are out of scope for now. */
+static float query_dpi_scale(void) {
+    HDC hdc = GetDC(NULL);
+    int dpi = (hdc != NULL) ? GetDeviceCaps(hdc, LOGPIXELSX) : 96;
+    if (hdc != NULL) ReleaseDC(NULL, hdc);
+    if (dpi <= 0) dpi = 96;
+    return (float)dpi / 96.0f;
+}
+
 /* Windows draws its own title bar (drag, Aero Snap, min/max/close) - this
    just asks DWM to paint that native chrome dark instead of replacing it
    with a custom one, so window management keeps working exactly as before.
@@ -148,6 +202,18 @@ int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
+    /* physical-pixels-per-logical-pixel for whatever monitor the window
+       lands on - 1.0 outside Windows, or on Windows at 100% scaling. Must be
+       known before SDL_CreateWindow (its size below is requested in real
+       device pixels) and is threaded from here into app_init/create_scene_
+       target so the window's actual footprint and offscreen AA buffer match
+       it - see ui_scale's own comment in app.h for the full picture. */
+    float ui_scale = 1.0f;
+#ifdef _WIN32
+    enable_dpi_awareness();
+    ui_scale = query_dpi_scale();
+#endif
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -174,7 +240,7 @@ int main(int argc, char **argv) {
     SDL_Window *window = SDL_CreateWindow(
         "Isonic Developer x64",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WINDOW_W, WINDOW_H,
+        (int)lroundf(WINDOW_W * ui_scale), (int)lroundf(WINDOW_H * ui_scale),
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (window == NULL) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -182,7 +248,7 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
-    SDL_SetWindowMinimumSize(window, WINDOW_MIN_W, WINDOW_MIN_H);
+    SDL_SetWindowMinimumSize(window, (int)lroundf(WINDOW_MIN_W * ui_scale), (int)lroundf(WINDOW_MIN_H * ui_scale));
 
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (renderer == NULL) {
@@ -225,9 +291,15 @@ int main(int argc, char **argv) {
        circuit.h), far past what's safe to put on a thread's default stack;
        same reasoning already documented for undo.c's own snapshot stack. */
     static App app;
-    app_init(&app, WINDOW_W, WINDOW_H, window);
+    app_init(&app, WINDOW_W, WINDOW_H, ui_scale, window);
 
-    SDL_Texture *scene_target = create_scene_target(renderer, app.window_w, app.window_h);
+    /* create_scene_target wants real device pixels (it's the render target
+       the window is eventually blitted from) - app.window_w/h themselves
+       stay logical throughout the app (see ui_scale in app.h), so scale them
+       up here rather than at every call site. */
+    int scene_phys_w = (int)lroundf(app.window_w * app.ui_scale);
+    int scene_phys_h = (int)lroundf(app.window_h * app.ui_scale);
+    SDL_Texture *scene_target = create_scene_target(renderer, scene_phys_w, scene_phys_h);
     int scene_w = app.window_w, scene_h = app.window_h;
     if (scene_target == NULL) {
         fprintf(stderr, "Isonic: offscreen AA target failed (%s), rendering without supersampling.\n", SDL_GetError());
@@ -245,7 +317,9 @@ int main(int argc, char **argv) {
 
         if (scene_target != NULL && (app.window_w != scene_w || app.window_h != scene_h)) {
             SDL_DestroyTexture(scene_target);
-            scene_target = create_scene_target(renderer, app.window_w, app.window_h);
+            scene_phys_w = (int)lroundf(app.window_w * app.ui_scale);
+            scene_phys_h = (int)lroundf(app.window_h * app.ui_scale);
+            scene_target = create_scene_target(renderer, scene_phys_w, scene_phys_h);
             scene_w = app.window_w;
             scene_h = app.window_h;
         }

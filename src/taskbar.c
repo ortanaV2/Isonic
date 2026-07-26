@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "taskbar.h"
+#include "text_util.h"
 
 static const char *k_labels[TOOL_COUNT] = {
     "Select",
@@ -450,10 +451,10 @@ static SDL_Texture *get_named_texture(SDL_Renderer *renderer, SDL_Texture **slot
 
 /* Draws a button's hover-name as a small floating tooltip just below it -
    shared by the tool buttons and the File/Settings buttons. */
-static void draw_hover_tooltip(SDL_Renderer *renderer, SDL_Texture *label, const SDL_Rect *r) {
+static void draw_hover_tooltip(SDL_Renderer *renderer, TTF_Font *font, SDL_Texture *label, const SDL_Rect *r) {
     if (label == NULL) return;
     int tw = 0, th = 0;
-    SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+    text_util_query_texture_size(font, label, &tw, &th);
     int pad = 6;
     SDL_Rect bg = { r->x, r->y + r->h + 4, tw + pad * 2, th + pad * 2 };
     SDL_SetRenderDrawColor(renderer, 25, 25, 28, 235);
@@ -662,7 +663,7 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
             SDL_Texture *label = get_label_texture(renderer, tb, font, i);
             if (label != NULL) {
                 int tw = 0, th = 0;
-                SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+                text_util_query_texture_size(font, label, &tw, &th);
                 SDL_Rect dst = { r->x + (r->w - tw) / 2, r->y + (r->h - th) / 2, tw, th };
                 SDL_RenderCopy(renderer, label, NULL, &dst);
             }
@@ -677,7 +678,7 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
        its button - the only place that label shows up now that the button
        itself is icon-only */
     if (hovered_tool >= 0 && hovered_tool != TOOL_PLACE_IC) {
-        draw_hover_tooltip(renderer, get_label_texture(renderer, tb, font, hovered_tool), &tb->button_rects[hovered_tool]);
+        draw_hover_tooltip(renderer, font, get_label_texture(renderer, tb, font, hovered_tool), &tb->button_rects[hovered_tool]);
     }
     /* both labels are suppressed together while the File dropdown is open -
        it visually sits right behind both buttons, so a floating "File" or
@@ -687,10 +688,10 @@ void taskbar_render(SDL_Renderer *renderer, TTF_Font *font, Taskbar *tb, Tool ac
        normally (just dimmed under the popup's own scrim, same as the rest
        of the taskbar). */
     if (hovered_file && !tb->file_menu_open) {
-        draw_hover_tooltip(renderer, get_named_texture(renderer, &tb->file_label_texture, font, "File"), &tb->file_button_rect);
+        draw_hover_tooltip(renderer, font, get_named_texture(renderer, &tb->file_label_texture, font, "File"), &tb->file_button_rect);
     }
     if (hovered_settings && !tb->file_menu_open) {
-        draw_hover_tooltip(renderer, get_named_texture(renderer, &tb->settings_label_texture, font, "Settings"), &tb->settings_button_rect);
+        draw_hover_tooltip(renderer, font, get_named_texture(renderer, &tb->settings_label_texture, font, "Settings"), &tb->settings_button_rect);
     }
 }
 
@@ -715,7 +716,7 @@ void taskbar_render_dropdowns(SDL_Renderer *renderer, TTF_Font *font, Taskbar *t
                 SDL_Texture *label = get_file_menu_item_texture(renderer, tb, font, i);
                 if (label != NULL) {
                     int tw = 0, th = 0;
-                    SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+                    text_util_query_texture_size(font, label, &tw, &th);
                     SDL_Rect dst = { frows[i].x + MENU_ROW_INDENT, frows[i].y + (frows[i].h - th) / 2, tw, th };
                     SDL_RenderCopy(renderer, label, NULL, &dst);
                 }
@@ -761,7 +762,7 @@ void taskbar_render_dropdowns(SDL_Renderer *renderer, TTF_Font *font, Taskbar *t
         }
         if (label != NULL) {
             int tw = 0, th = 0;
-            SDL_QueryTexture(label, NULL, NULL, &tw, &th);
+            text_util_query_texture_size(font, label, &tw, &th);
             SDL_Rect dst = { label_x, row->rect.y + (row->rect.h - th) / 2, tw, th };
             SDL_RenderCopy(renderer, label, NULL, &dst);
         }
