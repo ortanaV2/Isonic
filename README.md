@@ -32,7 +32,7 @@ tool.
 
 </details>
 
-<img width="1857" height="1080" alt="image" src="https://github.com/user-attachments/assets/cbd23dda-2d16-42a3-86bf-1dd6faae3e36" />
+<img alt="isonic_preview" src="https://github.com/user-attachments/assets/b2a6b4e1-e519-4317-b887-09c4faa04211" />
 
 ## Features
 
